@@ -1,0 +1,46 @@
+schemas:
+  sun:
+    type: curve
+    description: Circadian daylight to warm evening curve
+    points:
+      "07:00": { kelvin: 4300 }
+      "12:00": { kelvin: 4800 }
+      "17:30": { kelvin: 3800 }
+      "21:00": { kelvin: 3000 }
+      "23:00": { kelvin: 2400 }
+
+  no_blue:
+    type: curve
+    description: Blue-depleted evening/night spectrum (-blue)
+    points:
+      "19:00": { kelvin: 2500 }
+      "21:30": { rgb: [255, 130, 30] }
+      "23:00": { rgb: [255, 65, 10] }
+      "05:00": { rgb: [255, 70, 15] }
+
+  tv_vivid:
+    type: sequence
+    description: Smoothly transition into deep TV blue/amber, then animate vivid palette
+    transition_in:
+      duration_seconds: 8
+      rgb: [40, 90, 220]
+    then:
+      type: animated_palette
+      interval_seconds: 12
+      transition_seconds: 8
+      colors:
+        - [255, 60, 10]
+        - [235, 30, 140]
+        - [130, 30, 255]
+        - [20, 110, 255]
+        - [0, 210, 180]
+
+  embers:
+    type: animated_palette
+    description: Late night slow warm embers
+    interval_seconds: 18
+    transition_seconds: 12
+    colors:
+      - [255, 65, 10]
+      - [255, 100, 20]
+      - [210, 45, 5]

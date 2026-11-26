@@ -1,0 +1,19 @@
+ha_url: ""                # e.g. http://homeassistant.local:8123 (auto-uses supervisor inside HA App)
+ha_token: ""              # or set LUXADOR_HA_TOKEN env var
+dry_run: true             # Safe default: simulates & logs commands without changing real bulbs
+tick_seconds: 5
+db_path: "data/luxie.db"
+host: "0.0.0.0"
+port: 8099
+presence_settle_seconds: 45   # a presence pattern must hold this long before it counts (kills flicker)
+
+# OPNsense network signals (laptop online / actively moving data). API key needs
+# 'Diagnostics: ARP Table' + 'Reporting: Traffic' privileges. Prefer env vars for the secret:
+# LUXADOR_OPNSENSE_URL / LUXADOR_OPNSENSE_KEY / LUXADOR_OPNSENSE_SECRET
+opnsense:
+  url: ""                 # e.g. https://192.168.1.1
+  api_key: ""
+  api_secret: ""
+  verify_ssl: true        # set false only if OPNsense uses its self-signed cert
+  interface: lan
+  poll_seconds: 15

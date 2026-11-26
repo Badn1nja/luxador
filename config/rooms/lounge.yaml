@@ -1,0 +1,113 @@
+room: lounge
+friendly_name: Living Room (Lounge)
+
+# ROOM > PRESENCE > ZONE
+# Room sensors say "someone is in the room". Each zone has its own presence sensors (is someone here?)
+# and signals (what are they doing?). You don't define states: Luxie records every combination that
+# actually happens and asks you to name the recurring ones once (Presence tab > Learned patterns).
+presence:
+  sensors:
+    - binary_sensor.living_room_ld2450_radar_1_radar_presence
+    - binary_sensor.ikea_of_sweden_tradfri_motion_sensor_motion
+  clear_delay_seconds: 180
+  zones:
+    desk_kwn:
+      presence: [binary_sensor.living_room_ld2450_radar_1_zone_1]
+      signals: {}
+        # Add your laptop once OPNsense is connected (host = MAC, IP or hostname from Network devices list):
+        # laptop: { source: opnsense, host: "aa:bb:cc:dd:ee:ff", active_kbps: 40 }
+    sofa:
+      presence: [binary_sensor.living_room_ld2450_radar_1_zone_2]
+      signals:
+        tv: { entity: media_player.living_room_tv_2, states: [playing, paused, buffering] }
+
+lux_sensor: sensor.living_room_lux_lounge_illuminance
+media_sensor: media_player.living_room_tv_2
+
+# Known/initial empirical lux contribution at 100% brightness (Luxie refines this over time)
+bulb_lux_gain:
+  overhead: 85.0
+  shoelight: 14.0
+  loungetv: 12.0
+  mb_desk: 25.0
+  kwn_desk: 25.0
+
+punch_half_life_minutes: 45
+
+traits:
+  overhead: [main, glare_on_tv]
+  shoelight: [ambient, tv_accent, sleep_safe]
+  loungetv: [ambient, tv_accent, media_reactive, sleep_safe]
+  mb_desk: [desk, task]
+  kwn_desk: [desk, task]
+  kw_desk_led: [desk, onoff_only]
+
+tweaks:
+  presence_recent_minutes: 20
+  no_presence_before_sleep: true
+  avoid_auto_on_above_lux: 250
+  require_input_for_task_wake: false
+  hold_manual_until_clear: false
+
+bulbs:
+  overhead:
+    - light.living_room_threelight_l
+    - light.living_room_threelight_m
+    - light.living_room_threelight_t
+  shoelight: light.shoelight_light
+  loungetv: light.loungetv
+  mb_desk: light.wled_strip
+  kwn_desk: light.kwn_desk
+  kw_desk_led: light.tz3000_46t1rvdu_ts0001
+
+# Compact syntax: ROLE :: CONDITION_OR_TIME :: BRIGHTNESS_OR_LUX :: COLOR_SCHEMA
+rules:
+  # Base room ambient (daytime respects Lux-Lounge; evening winds down smoothly)
+  - "overhead  :: 07:00-21:00      :: target_lux(160, min=0, max=85) :: sun"
+  - "overhead  :: 21:00-02:00      :: ramp(65 -> 12)                 :: no_blue"
+  - "shoelight :: 07:00-23:00      :: target_lux(120, min=15, max=90):: sun"
+  - "shoelight :: 23:00-06:00      :: 10%                            :: no_blue"
+  - "loungetv  :: 17:00-23:00      :: target_lux(90, min=20, max=75) :: sun"
+
+  # Desks stay functional & isolated from TV color chaos
+  - "mb_desk   :: 07:00-18:30      :: target_lux(200, min=20, max=90):: sun"
+  - "kwn_desk  :: zone(desk_kwn)   :: 80%                            :: sun"
+  - "kw_desk_led :: zone(desk_kwn) :: 100%                           :: keep"
+
+overlays:
+  # When TV is playing: a gentle lean, not a scene change. Eases in over 6 min (and back out),
+  # nudges the evening curve 20m earlier, softens overhead, lifts the bias light. Colours stay on the
+  # room's curve. (tv_vivid still exists in schemas.yaml if you want the party version back.)
+  - name: tv_watching
+    when: "media == playing"
+    priority: 20
+    blend_minutes: 6
+    time_warp_minutes: 20
+    apply:
+      - "overhead  :: any :: dim(-35%, floor=0) :: keep"
+      - "loungetv  :: any :: 60%                :: keep"
+
+  # Bedtime / Sleep Mode: ultra-low -blue glow, kills overhead & desks
+  # Party: every Friday from 17:00, or whenever the switch is on. Accents only; desks stay functional,
+  # so sitting at the desk keeps working light while the sofa side gets the colour.
+  # Conditions: day == fri | day in fri,sat | day == weekend | time >= 17:00 | time in 17:00-02:00 |
+  #             any HA entity (switch.x == on) | zone.sofa == on | state == working | and / or / not
+  - name: party
+    when: "switch.luxie_party_lounge == on or day == fri and time >= 17:00"
+    priority: 30
+    blend_minutes: 5
+    apply:
+      - "shoelight :: any :: 35% :: embers"
+      - "loungetv  :: any :: 70% :: tv_vivid"
+
+  - name: bedtime
+    when: "bedtime == on"
+    priority: 50
+    blend_minutes: 3
+    apply:
+      - "overhead    :: any :: 0%  :: no_blue"
+      - "mb_desk     :: any :: 0%  :: no_blue"
+      - "kwn_desk    :: any :: 0%  :: no_blue"
+      - "kw_desk_led :: any :: 0%  :: keep"
+      - "loungetv    :: any :: 8%  :: embers"
+      - "shoelight   :: any :: 6%  :: no_blue"
