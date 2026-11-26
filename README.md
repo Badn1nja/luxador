@@ -1,5 +1,7 @@
 # El Luxador & Luxie
 
+[![tests](https://github.com/Badn1nja/luxador/actions/workflows/tests.yml/badge.svg)](https://github.com/Badn1nja/luxador/actions/workflows/tests.yml)
+
 A systemic, YAML-driven Home Assistant lighting controller + live HTTP sandbox & telemetry engine:
 
 - **El Luxador (Core Engine):** Compiles compact `ROLE :: TIME :: BRIGHTNESS/LUX :: SCHEMA` YAML maps into a deterministic layer stack with closed-loop `target_lux`, event time-warping (e.g. TV on early pulls wind-down forward), and decaying "punching-bag" manual overrides.
@@ -59,5 +61,9 @@ light out of the other controller (Magic Areas, Adaptive Lighting, etc.).
 ## Running Tests
 
 ```powershell
+.\.venv\Scripts\pip.exe install -r requirements-dev.txt
 .\.venv\Scripts\pytest.exe -v
 ```
+
+GitHub Actions runs the same suite on Python 3.11–3.13 for every push and pull request
+(`.github/workflows/tests.yml`).
