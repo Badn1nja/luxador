@@ -237,6 +237,10 @@ class HABridge:
     async def apply_role(self, eval_role: RoleEvaluation, transition_seconds: int = 3) -> list[dict[str, Any]]:
         """Dispatch capability-safe light service calls (or dry-run log payloads)."""
         commands: list[dict[str, Any]] = []
+        if eval_role.hands_off:
+            return commands  # Standard §5: disabled / ignored lights are never sent anything
+        if eval_role.transition_s is not None:
+            transition_seconds = eval_role.transition_s
         for entity_id in eval_role.entities:
             if entity_id in eval_role.offline_entities:
                 continue

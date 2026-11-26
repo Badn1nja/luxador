@@ -41,6 +41,13 @@ Inside HA as an app this is automatic. For local dev, edit `luxador/src/config/s
 - `LUXADOR_HA_TOKEN="<long-lived-access-token>"`
 - `LUXADOR_DRY_RUN="true"` (logs intended bulb changes without touching physical lights until you're ready!)
 
+## The Standard
+
+Luxador is built against **[docs/STANDARD.md](docs/STANDARD.md)**: the HOUSE › ROOM › ZONE › LIGHT hierarchy,
+every setting with its default and range, who wins when settings disagree, and the exact pipeline from sensors
+to a light level. Each light carries a trace of that pipeline ("why is this light at 42 %?"), the whole model is
+validated as one piece, and it exports/imports as one JSON file. If the code and the standard disagree, it's a bug.
+
 ## Build Phases
 
 | Phase | What | Status |

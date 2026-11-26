@@ -15,6 +15,19 @@ max_states: 28                # most states Luxie may discover from your data (f
 latitude: ""                  # blank = Home Assistant's home location (used for the yearly sun model)
 longitude: ""
 
+# The general curve (docs/STANDARD.md §2): how much light a level of darkness needs. Tunable live in Luxie.
+curve:
+  dark_lux: 15                # indoor daylight at/below this = fully dark
+  bright_lux: 250             # at/above this the room needs no light
+  min_pct: 10
+  max_pct: 100
+  shape: 0.8                  # < 1 rises early (gentle), > 1 rises late
+  night_from: "23:00"
+  night_to: "06:00"
+  night_max_pct: 35
+  colour_schema: sun
+  darkness_source: ambient    # ambient = room lux minus our own lights; sun = sun elevation only
+
 # Seasonal compensation from the yearly sun model (computed for your latitude, so either hemisphere works)
 seasonal:
   enabled: false              # true = apply to the lights (still subject to dry_run)

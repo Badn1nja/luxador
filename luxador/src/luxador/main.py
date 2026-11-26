@@ -20,6 +20,20 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .datalab import DEFAULT_INTENT_POLICY, RANGES, DataLab
+from .resolver import standard_darkness
+from .seasonal import sun_elevation
+from .standard import (
+    SOFT_START_SECONDS,
+    STANDARD_VERSION,
+    HouseModel,
+    LightSettings,
+    build_house,
+    curve_points,
+    deep_merge,
+    locked_hits,
+    paths_in,
+    suggest_thresholds,
+)
 from .seasonal import LIMITS as SEASONAL_LIMITS
 from .seasonal import SeasonalConfig, SeasonalModel, clean_overrides
 from .datalab import add_since_active as d_add_since_active
@@ -119,6 +133,7 @@ def _load_settings() -> dict[str, Any]:
         "latitude": data.get("latitude"),
         "longitude": data.get("longitude"),
         "seasonal": dict(data.get("seasonal") or {}),
+        "curve": dict(data.get("curve") or {}),
         "opnsense": {
             "url": os.environ.get("LUXADOR_OPNSENSE_URL", opn.get("url", "")),
             "api_key": os.environ.get("LUXADOR_OPNSENSE_KEY", opn.get("api_key", "")),
@@ -166,6 +181,8 @@ class EngineRuntime:
         self.last_active_at: dict[str, datetime] = {}
         self.last_datalab_rebuild: datetime | None = None
         self.last_raw_tick: dict[str, datetime] = {}
+        self.darkness_ema: dict[str, tuple[float, datetime]] = {}
+        self.on_dates: dict[tuple[str, str], str] = {}
         self.last_vacuum: datetime | None = None
         # SANDBOX ONLY: a static snapshot of the Lounge entities captured once, so the UI has something to
         # show without HA. It is labelled as sandbox data everywhere and never written to the presence tables.
@@ -243,6 +260,49 @@ class EngineRuntime:
         m = self.luxie.load_model("_house", "seasonal_overrides")
         return json.loads(m[1]) if m else {}
 
+    # ---------------------------------------------------------------- the house model (Standard)
+    def house_overrides(self) -> dict[str, Any]:
+        m = self.luxie.load_model("_house", "house_overrides")
+        return json.loads(m[1]) if m else {}
+
+    def house_locks(self) -> list[str]:
+        m = self.luxie.load_model("_house", "house_locks")
+        return json.loads(m[1]) if m else []
+
+    def house(self) -> tuple[HouseModel | None, list[str]]:
+        return build_house(self.settings, self.rooms, self.house_overrides())
+
+    def house_model(self) -> HouseModel | None:
+        model, errors = self.house()
+        if errors:
+            logger.warning("House model invalid (%s); rooms fall back to their legacy rules", "; ".join(errors))
+        return model
+
+    def sun_now(self, now: datetime) -> float | None:
+        if self.live:
+            return ((self.bridge.states.get(self.settings.get("sun_entity") or "sun.sun") or {})
+                    .get("attributes") or {}).get("elevation")
+        model = self.seasonal_model()
+        if not model.located:
+            return None
+        local = now if now.tzinfo else now.replace(tzinfo=self.datalab.tz())
+        return round(sun_elevation(model.lat, model.lon, local), 1)
+
+    def step_darkness(self, room_name: str, now: datetime) -> None:
+        """Stage 2 smoothing: an exponential average with a ~5 min time constant (no flicker on passing clouds)."""
+        house = self.house_model()
+        if not house or room_name not in house.rooms:
+            return
+        inp = self.current_inputs(room_name, smoothed=False)
+        raw, _ = standard_darkness(house, self.rooms[room_name], inp)
+        prev = self.darkness_ema.get(room_name)
+        if prev is None or not self.live:
+            self.darkness_ema[room_name] = (raw, now)  # sandbox: follow the slider immediately
+            return
+        dt = max(0.0, (now - prev[1]).total_seconds())
+        a = min(1.0, dt / 300.0)
+        self.darkness_ema[room_name] = (prev[0] + (raw - prev[0]) * a, now)
+
     def seasonal_locks(self) -> list[str]:
         m = self.luxie.load_model("_house", "seasonal_locks")
         return json.loads(m[1]) if m else []
@@ -255,6 +315,31 @@ class EngineRuntime:
         model = self.seasonal_model()
         local = now.astimezone(self.datalab.tz()) if now.tzinfo else now.replace(tzinfo=self.datalab.tz())
         return model.now(local)
+
+    def soft_start_seconds(self, room_name: str, role: str, prev: int | None, new: int, now: datetime) -> int:
+        """Standard §4 stage 9: fade in from off per the light's soft_start setting."""
+        from .standard import DEFAULT_TRANSITION_S
+
+        key, today = (room_name, role), now.strftime("%Y-%m-%d")
+        first_today = self.on_dates.get(key) != today
+        if new > 0:
+            self.on_dates[key] = today
+        if not (new > 0 and not prev):
+            return DEFAULT_TRANSITION_S
+        house = self.house_model()
+        rm = house.rooms.get(room_name) if house else None
+        ls = (rm.lights.get(role) if rm else None) or LightSettings()
+        if ls.soft_start == "always" or (ls.soft_start == "first_of_day" and first_today):
+            return SOFT_START_SECONDS[ls.soft_start_speed]
+        return DEFAULT_TRANSITION_S
+
+    def current_pins(self, room_name: str) -> dict[str, dict[str, Any]]:
+        """Switchboard links for the state the room is in right now."""
+        try:
+            st = (self.live_intent(room_name) or {}).get("state") or {}
+        except Exception:
+            return {}
+        return st.get("links") or {}
 
     def live_intent(self, room_name: str, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now()
@@ -345,7 +430,13 @@ class EngineRuntime:
         self.presence_snap[room_name] = upd.snapshot
         return upd.snapshot
 
-    def current_inputs(self, room_name: str) -> RoomInputs:
+    def current_inputs(self, room_name: str, smoothed: bool = True) -> RoomInputs:
+        inp = self._current_inputs(room_name)
+        ema = self.darkness_ema.get(room_name) if smoothed else None
+        return inp.model_copy(update={"sun_elev": self.sun_now(datetime.now()),
+                                      "darkness": round(ema[0], 4) if ema else None})
+
+    def _current_inputs(self, room_name: str) -> RoomInputs:
         rcfg = self.rooms[room_name]
         snap = self.presence_snap.get(room_name)
         if snap is None:
@@ -439,6 +530,8 @@ class EngineRuntime:
             mode_entered_at=self.mode_entered_at.get(room_name),
             overlay_weights=weights,
             seasonal=self.seasonal_now(now),
+            house=self.house_model(),
+            pins=self.current_pins(room_name),
         )
         drift = self.luxie.check_lux_drift(room_name, inputs.ambient_lux, now)
         return {
@@ -551,6 +644,7 @@ class EngineRuntime:
         self._accumulate_net(now)
         for rname in list(self.rooms):
             self.update_presence(rname, now)
+            self.step_darkness(rname, now)
             self.step_overlay_weights(rname, self.current_inputs(rname), now)
             data = self.evaluate_room(rname, now=now)
             ev = data["evaluation"]
@@ -600,6 +694,7 @@ class EngineRuntime:
                     )
                 self.last_applied_bri[(rname, role)] = new_bri
                 rev_obj = RoleEvaluation.model_validate(r_dict)
+                rev_obj.transition_s = self.soft_start_seconds(rname, role, prev_bri, new_bri, now)
                 cmds.extend(await self.bridge.apply_role(rev_obj))
             self.last_commands[rname] = cmds
 
@@ -709,6 +804,17 @@ class SeasonalTuneRequest(BaseModel):
     values: dict[str, Any] = {}
     reset: bool = False
     locks: dict[str, bool] = {}
+
+
+class HousePatchRequest(BaseModel):
+    patch: dict[str, Any] = {}
+    locks: dict[str, bool] = {}
+    reset_paths: list[str] = []
+
+
+class HouseImportRequest(BaseModel):
+    overrides: dict[str, Any] = {}
+    locks: list[str] = []
 
 
 class MergeRequest(BaseModel):
@@ -1110,6 +1216,106 @@ async def switchboard_link(room_name: str, state_id: int, req: LinkRequest) -> d
         raise HTTPException(423, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+def _drop_path(d: dict[str, Any], path: str) -> None:
+    parts = path.split(".")
+    for p in parts[:-1]:
+        d = d.get(p) if isinstance(d, dict) else None
+        if d is None:
+            return
+    if isinstance(d, dict):
+        d.pop(parts[-1], None)
+
+
+@app.get("/api/house/model")
+async def house_model_get() -> dict[str, Any]:
+    """The whole house model (Standard v1): effective values, what the UI overrode, locks, and any errors."""
+    assert runtime is not None
+    model, errors = runtime.house()
+    return {"version": STANDARD_VERSION, "model": model.model_dump() if model else None, "errors": errors,
+            "overrides": runtime.house_overrides(), "locks": runtime.house_locks(),
+            "rooms": {n: {"lights": list(c.bulbs), "zones": list(c.presence.zones)} for n, c in runtime.rooms.items()},
+            "curve_points": curve_points(model.curve) if model else []}
+
+
+@app.post("/api/house/model")
+async def house_model_patch(req: HousePatchRequest) -> dict[str, Any]:
+    """Change settings. The whole model is re-validated; nothing is saved unless all of it is valid.
+    Locked paths (and everything under them) refuse edits and resets until unlocked."""
+    assert runtime is not None
+    locks = set(runtime.house_locks())
+    prior = set(locks)
+    for path, on in req.locks.items():
+        (locks.add if on else locks.discard)(path)
+    hit = locked_hits(paths_in(req.patch) + req.reset_paths, sorted(prior & locks))
+    if hit:
+        raise HTTPException(423, f"locked: {', '.join(hit)} (unlock first)")
+    overrides = deep_merge(runtime.house_overrides(), req.patch)
+    for path in req.reset_paths:
+        _drop_path(overrides, path)
+    model, errors = build_house(runtime.settings, runtime.rooms, overrides)
+    if errors:
+        raise HTTPException(400, {"errors": errors})
+    runtime.luxie.save_model("_house", "house_overrides", json.dumps(overrides))
+    runtime.luxie.save_model("_house", "house_locks", json.dumps(sorted(locks)))
+    return await house_model_get()
+
+
+@app.get("/api/house/model/export")
+async def house_model_export() -> dict[str, Any]:
+    """One file to back up, diff, or move to a new install."""
+    assert runtime is not None
+    model, errors = runtime.house()
+    return {"luxador_house_model": STANDARD_VERSION, "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "effective": model.model_dump() if model else None, "errors": errors,
+            "overrides": runtime.house_overrides(), "locks": runtime.house_locks()}
+
+
+@app.post("/api/house/model/import")
+async def house_model_import(req: HouseImportRequest) -> dict[str, Any]:
+    assert runtime is not None
+    model, errors = build_house(runtime.settings, runtime.rooms, req.overrides)
+    if errors:
+        raise HTTPException(400, {"errors": errors})
+    runtime.luxie.save_model("_house", "house_overrides", json.dumps(req.overrides))
+    runtime.luxie.save_model("_house", "house_locks", json.dumps(sorted(set(req.locks))))
+    return await house_model_get()
+
+
+@app.get("/api/house/curve/suggest/{room_name}")
+async def curve_suggest(room_name: str) -> dict[str, Any]:
+    """Darkness thresholds learned from when you actually switched lights on."""
+    _room_or_404(room_name)
+    return suggest_thresholds(runtime.luxie.load_slots(room_name))
+
+
+@app.get("/api/rooms/{room_name}/grid")
+async def room_grid(room_name: str) -> dict[str, Any]:
+    """Preview: what every light does for each darkness level x presence situation, right now."""
+    _room_or_404(room_name)
+    house = runtime.house_model()
+    if not house:
+        raise HTTPException(400, "house model invalid; fix it first")
+    cfg = runtime.rooms[room_name]
+    base = runtime.current_inputs(room_name)
+    now = datetime.now()
+    zones = list(cfg.presence.zones)
+    situations = [("away", False, {})] + [("room", True, {z: False for z in zones})] + \
+                 [(f"zone:{z}", True, {zz: zz == z for zz in zones}) for z in zones]
+    levels = [("bright", 0.0), ("dim", 0.5), ("dark", 1.0)]
+    cells = {}
+    for sname, occ, zmap in situations:
+        for lname, d in levels:
+            inp = base.model_copy(update={"occupied": occ, "zones": zmap, "darkness": d, "media_state": "off",
+                                          "bedtime": False, "learned_state": None})
+            ev = resolve_room(cfg, runtime.schemas, inp, now, house=house, overlay_weights={})
+            cells[f"{sname}|{lname}"] = {r: e.brightness_pct for r, e in ev.roles.items()}
+    owners = {r: house.owner(room_name, r)[0] for r in cfg.bulbs}
+    return {"situations": [s[0] for s in situations], "levels": [l[0] for l in levels], "cells": cells,
+            "lights": list(cfg.bulbs), "owners": owners,
+            "zone_modes": {z: house.rooms[room_name].zones.get(z).mode if z in house.rooms[room_name].zones else "join"
+                           for z in zones}}
 
 
 @app.get("/api/house/seasonal")

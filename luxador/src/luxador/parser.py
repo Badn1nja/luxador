@@ -165,10 +165,16 @@ def _parse_zone(name: str, raw: Any) -> ZoneConfig:
     pres = raw.get("presence", [])
     if isinstance(pres, str):
         pres = [pres]
+    lights = raw.get("lights", [])
+    if isinstance(lights, str):
+        lights = [lights]
     return ZoneConfig(
         name=name,
         presence=[str(p) for p in pres],
         signals=_parse_signals(raw.get("signals"), f"zone {name}"),
+        lights=[str(x) for x in lights],
+        mode=raw.get("mode"),
+        idle_pct=float(raw["idle_pct"]) if raw.get("idle_pct") is not None else None,
     )
 
 
@@ -239,6 +245,7 @@ def load_room_yaml(yaml_text: str) -> RoomConfig:
         lux_sensor=data.get("lux_sensor"),
         media_sensor=data.get("media_sensor"),
         bedtime_entity=data.get("bedtime_entity", "input_boolean.bedtime_mode"),
+        standard=dict(data.get("standard") or {}),
         bulb_lux_gain={str(k): float(v) for k, v in data.get("bulb_lux_gain", {}).items()},
         punch_half_life_minutes=float(data.get("punch_half_life_minutes", 45.0)),
         bulbs=bulbs,

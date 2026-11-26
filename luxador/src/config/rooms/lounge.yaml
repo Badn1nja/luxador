@@ -13,11 +13,16 @@ presence:
   zones:
     desk_kwn:
       presence: [binary_sensor.living_room_ld2450_radar_1_zone_1]
+      lights: [kwn_desk, kw_desk_led]   # this zone OWNS these lights (Standard §1)
+      mode: own                         # own = they follow the desk's presence, not the room's
+      idle_pct: 0                       # level while you're in the room but not at the desk
       signals: {}
         # Add your laptop once OPNsense is connected (host = MAC, IP or hostname from Network devices list):
         # laptop: { source: opnsense, host: "aa:bb:cc:dd:ee:ff", active_kbps: 40 }
     sofa:
       presence: [binary_sensor.living_room_ld2450_radar_1_zone_2]
+      lights: [loungetv]
+      mode: join                        # join = on whenever the room is occupied
       signals:
         tv: { entity: media_player.living_room_tv_2, states: [playing, paused, buffering] }
 
@@ -48,6 +53,15 @@ tweaks:
   avoid_auto_on_above_lux: 250
   require_input_for_task_wake: false
   hold_manual_until_clear: false
+
+# Standard v1 (docs/STANDARD.md): the general curve drives these lights; settings here are per light.
+# Anything not listed uses the defaults. You can also change all of this live in the Luxie tab.
+standard:
+  engine: standard            # standard = general curve x presence; rules = the legacy rules below
+  lights:
+    overhead:  { soft_start: first_of_day, soft_start_speed: slow }
+    shoelight: { scale: 0.6, min_pct: 5 }
+    kw_desk_led: { curve: switch }
 
 bulbs:
   overhead:

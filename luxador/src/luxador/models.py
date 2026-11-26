@@ -87,6 +87,9 @@ class ZoneConfig(BaseModel):
     name: str
     presence: list[str] = Field(default_factory=list)
     signals: list[SignalSpec] = Field(default_factory=list)
+    lights: list[str] = Field(default_factory=list)  # light groups this zone owns (Standard §1)
+    mode: str | None = None  # join | own (None = standard default)
+    idle_pct: float | None = None
 
 
 class PresenceConfig(BaseModel):
@@ -107,6 +110,7 @@ class RoomConfig(BaseModel):
     lux_sensor: str | None = None
     media_sensor: str | None = None
     bedtime_entity: str | None = "input_boolean.bedtime_mode"
+    standard: dict[str, Any] = Field(default_factory=dict)  # `standard:` block: engine + per-light settings
     bulb_lux_gain: dict[str, float] = Field(default_factory=dict)
     punch_half_life_minutes: float = 45.0
     bulbs: dict[str, list[str]] = Field(default_factory=dict)
@@ -138,6 +142,7 @@ class BrightnessBreakdown(BaseModel):
     rule_matched: str = "unoccupied/off"
     bucket_key: str = "default"
     notes: list[str] = Field(default_factory=list)
+    trace: list[dict[str, Any]] = Field(default_factory=list)  # Standard §4: one entry per pipeline stage
 
 
 class RoleEvaluation(BaseModel):
@@ -150,6 +155,9 @@ class RoleEvaluation(BaseModel):
     color: ColorOutput
     breakdown: BrightnessBreakdown
     offline_entities: list[str] = Field(default_factory=list)
+    hands_off: bool = False  # disabled or 'ignore' pinned: never send a command
+    zone: str | None = None
+    transition_s: int | None = None
 
 
 class RoomInputs(BaseModel):
@@ -167,6 +175,8 @@ class RoomInputs(BaseModel):
     learned_match: str | None = None  # "exact" | "approx" | None
     lux_source: str = "sensor"
     warnings: list[str] = Field(default_factory=list)
+    sun_elev: float | None = None
+    darkness: float | None = None  # smoothed darkness from the runtime (Standard §4 stage 2)
 
 
 class StateConfidence(BaseModel):

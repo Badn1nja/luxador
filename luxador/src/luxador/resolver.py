@@ -24,6 +24,36 @@ from .models import (
     StateConfidence,
 )
 from .schemas import evaluate_schema, kelvin_to_rgb, lerp_rgb
+from .standard import (
+    ROOM_ZONE,
+    HouseModel,
+    LightSettings,
+    curve_level,
+    darkness_from_lux,
+    darkness_from_sun,
+    in_window,
+)
+
+
+def standard_darkness(house: HouseModel, room_cfg: RoomConfig, inputs: RoomInputs) -> tuple[float, str]:
+    """Stage 2: raw darkness 0..1 and where it came from. Ambient = room lux minus what our own lights add."""
+    curve = house.curve
+    if curve.darkness_source == "ambient" and inputs.lux_source in ("sensor", "sandbox"):
+        own = 0.0
+        for role, ents in room_cfg.bulbs.items():
+            pct = 0.0
+            for e in ents:
+                st = inputs.entity_states.get(e, {})
+                if st.get("state") == "on":
+                    b = (st.get("attributes") or {}).get("brightness")
+                    pct = max(pct, float(b) / 2.55 if b is not None else 100.0)
+            own += room_cfg.bulb_lux_gain.get(role, 40.0) * pct / 100.0
+        ambient = max(0.0, inputs.ambient_lux - own)
+        return darkness_from_lux(ambient, curve), f"ambient {ambient:.0f} lx (room {inputs.ambient_lux:.0f} − own lights {own:.0f})"
+    d = darkness_from_sun(inputs.sun_elev)
+    if d is not None:
+        return d, f"sun {inputs.sun_elev:.0f}°"
+    return darkness_from_lux(max(0.0, inputs.ambient_lux), curve), f"room lux {inputs.ambient_lux:.0f} (no sun data)"
 
 
 def _condition_matches(
@@ -240,6 +270,8 @@ def resolve_room(
     mode_entered_at: datetime | None = None,
     overlay_weights: dict[str, float] | None = None,
     seasonal: dict[str, Any] | None = None,
+    house: HouseModel | None = None,
+    pins: dict[str, dict[str, Any]] | None = None,
 ) -> RoomEvaluation:
     """Resolve desired target & causal breakdown for every role in a room.
 
@@ -271,6 +303,15 @@ def resolve_room(
 
     roles_out: dict[str, RoleEvaluation] = {}
     confidence = compute_state_confidence(inputs, now)
+    pins = pins or {}
+
+    room_model = house.rooms.get(room_cfg.room) if house else None
+    standard = room_model is not None and room_model.engine == "standard"
+    if standard:
+        raw_d, d_src = standard_darkness(house, room_cfg, inputs)
+        darkness = inputs.darkness if inputs.darkness is not None else raw_d
+        minute = effective_time.hour * 60 + effective_time.minute
+        night = in_window(minute, house.curve.night_from, house.curve.night_to)
 
     for role, entities in room_cfg.bulbs.items():
         offline = [
@@ -286,7 +327,22 @@ def resolve_room(
             if "brightness" in attrs and attrs["brightness"] is not None:
                 current_pct = max(current_pct, float(attrs["brightness"]) / 2.55)
 
-        if not inputs.occupied:
+        trace: list[dict[str, Any]] = []
+        zname, zone = (house.owner(room_cfg.room, role) if standard else (None, None))
+        ls = (room_model.lights.get(role) or LightSettings()) if standard else None
+        pin = pins.get(role)
+        if standard and (not ls.enabled or (pin and pin.get("mode") == "ignore")):
+            why = "disabled in its settings" if not ls.enabled else "pinned 'ignore' in the switchboard"
+            roles_out[role] = RoleEvaluation(
+                role=role, entities=entities, on=False, brightness_pct=0, hands_off=True, zone=zname,
+                color=ColorOutput(mode="keep", stage="hands_off"),
+                breakdown=BrightnessBreakdown(rule_matched=f"hands off ({why})", bucket_key=bucket_key,
+                                              trace=[{"stage": "pins", "out": None, "note": f"hands off: {why}"}]),
+                offline_entities=offline,
+            )
+            continue
+
+        if not inputs.occupied and not (standard and pin and pin.get("mode") == "pinned"):
             roles_out[role] = RoleEvaluation(
                 role=role,
                 entities=entities,
@@ -298,20 +354,56 @@ def resolve_room(
                     rule_matched="unoccupied -> off",
                     bucket_key=bucket_key,
                     notes=["Room clear; lights off"] + ([f"Skipped offline: {offline}"] if offline else []),
+                    trace=[{"stage": "presence", "out": 0, "note": "room empty → off"}] if standard else [],
                 ),
                 offline_entities=offline,
+                zone=zname,
             )
             continue
 
-        # 1. Resolve Base Layer rule
+        # 1. Resolve Base Layer: the general curve (Standard) or a hand-written rule (legacy)
         base_rule: ParsedRule | None = None
-        for rule in room_cfg.rules:
-            if rule.role == role and _condition_matches(rule.condition, effective_time, inputs):
-                base_rule = rule
-                break
+        if not standard:
+            for rule in room_cfg.rules:
+                if rule.role == role and _condition_matches(rule.condition, effective_time, inputs):
+                    base_rule = rule
+                    break
 
         gain = room_cfg.bulb_lux_gain.get(role, 40.0)
-        if base_rule:
+        if standard:
+            curve = house.curve
+            zone_here = zone.mode == "join" or bool(inputs.zones.get(zname, False))
+            trace.append({"stage": "presence", "out": None,
+                          "note": f"room occupied; zone {zname} ({zone.mode})" + ("" if zone_here else f" empty → idle {zone.idle_pct:.0f}%")})
+            trace.append({"stage": "darkness", "out": round(darkness, 2), "note": d_src})
+            lvl = curve_level(darkness, curve)
+            note = f"curve({darkness:.2f}) = {lvl:.0f}%"
+            if night and lvl > curve.night_max_pct:
+                lvl = curve.night_max_pct
+                note += f", night cap {curve.night_max_pct:.0f}%"
+            trace.append({"stage": "curve", "out": round(lvl, 1), "note": note})
+            if not zone_here:
+                lvl = zone.idle_pct if lvl > 0 else 0.0
+                trace.append({"stage": "light", "out": round(lvl, 1), "note": "zone idle level"})
+            elif lvl > 0:
+                if ls.curve == "fixed":
+                    lvl, how = ls.fixed_pct, f"fixed {ls.fixed_pct:.0f}%"
+                elif ls.curve == "switch":
+                    lvl, how = 100.0, "switch: on"
+                else:
+                    lvl = lvl * ls.scale + ls.offset_pct
+                    how = f"× {ls.scale:g} {ls.offset_pct:+.0f}%"
+                trace.append({"stage": "light", "out": round(max(0.0, lvl), 1), "note": f"{ls.curve}: {how}"})
+            base_pct = max(0.0, min(100.0, lvl))
+            if ls.curve == "natural":
+                base_color = evaluate_schema(curve.colour_schema, schemas, effective_time, elapsed_in_mode)
+                if ls.kelvin_offset and base_color.mode == "kelvin" and base_color.kelvin:
+                    k = base_color.kelvin + ls.kelvin_offset
+                    base_color = base_color.model_copy(update={"kelvin": k, "rgb": kelvin_to_rgb(k)})
+            else:
+                base_color = ColorOutput(mode="keep", stage="light leaves colour alone")
+            matched_desc = f"standard curve · zone {zname}"
+        elif base_rule:
             base_pct = evaluate_brightness_spec(
                 base_rule.brightness,
                 base_rule.condition,
@@ -394,11 +486,34 @@ def resolve_room(
                 k = int(working_color.kelvin + season["kelvin_now"])
                 working_color = working_color.model_copy(update={"kelvin": k, "rgb": kelvin_to_rgb(k)})
 
+        if standard:
+            if overlay_delta or season:
+                trace.append({"stage": "layers", "out": round(working_pct, 1),
+                              "note": ", ".join(n for n in notes if "easing" in n or "Winter" in n or "Season" in n) or "overlays"})
+            if punch_residual:
+                trace.append({"stage": "manual", "out": final_pct, "note": f"manual nudge {punch_residual:+.0f}% (decaying)"})
+            if final_pct > 0:
+                hi = ls.max_pct
+                if night:
+                    hi = min(hi, house.curve.night_max_pct)
+                clamped = int(max(ls.min_pct, min(hi, final_pct)))
+                if clamped != final_pct:
+                    trace.append({"stage": "clamp", "out": clamped, "note": f"light range {ls.min_pct:.0f}–{hi:.0f}%"})
+                final_pct = clamped
+            if pin and pin.get("mode") in ("pinned", "off"):
+                final_pct = int(pin.get("brightness") or 0) if pin["mode"] == "pinned" else 0
+                if pin["mode"] == "pinned" and pin.get("kelvin"):
+                    k = int(pin["kelvin"])
+                    working_color = ColorOutput(mode="kelvin", kelvin=k, rgb=kelvin_to_rgb(k), stage="pinned")
+                trace.append({"stage": "pins", "out": final_pct, "note": f"switchboard: {pin['mode']}"})
+            trace.append({"stage": "output", "out": final_pct, "note": "on" if final_pct else "off"})
+
         roles_out[role] = RoleEvaluation(
             role=role,
             entities=entities,
             on=final_pct > 0,
             brightness_pct=final_pct,
+            zone=zname,
             color=working_color,
             breakdown=BrightnessBreakdown(
                 base_pct=round(base_pct, 1),
@@ -410,6 +525,7 @@ def resolve_room(
                 rule_matched=matched_desc,
                 bucket_key=bucket_key,
                 notes=notes,
+                trace=trace,
             ),
             offline_entities=offline,
         )

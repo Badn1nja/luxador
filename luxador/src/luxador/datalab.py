@@ -932,7 +932,7 @@ class DataLab:
         sid = assign_state(st_model, {**s, "zones": zones_now, "_since_active": since_active_min})
         state = next((x for x in st_model.get("states", []) if x["id"] == sid), None)
         return {**arbitrate(post, self.policy), "posterior": post, "features": feats,
-                "state": {k: state[k] for k in ("id", "name", "description", "intent", "lights")} if state else None}
+                "state": {k: state.get(k) for k in ("id", "name", "description", "intent", "lights", "links")} if state else None}
 
     def summary(self, room: str) -> dict[str, Any]:
         slots = self.store.load_slots(room)
