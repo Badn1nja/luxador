@@ -201,3 +201,73 @@ def test_state_names_survive_rebuild(tmp_path):
     lab.name_state("lounge", tv["id"], "Telly time")
     lab.rebuild("lounge")
     assert any(st["name"] == "Telly time" for st in lab.states("lounge")["states"])
+
+
+def test_retention_prunes_and_keeps_last_state(tmp_path):
+    store = LuxieStore(tmp_path / "t.db")
+    old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+    older = (datetime.now(timezone.utc) - timedelta(days=210)).isoformat()
+    new = datetime.now(timezone.utc).isoformat()
+    store.store_history([("light.a", older, "on", "{}"), ("light.a", old, "off", "{}"), ("light.a", new, "on", "{}")])
+    store.log_causal_event("lounge", "overhead", 0, 50, "x", "y", ts=datetime.now(timezone.utc) - timedelta(days=40))
+    out = store.apply_retention()
+    assert out["ha_history"] == 1 and out["causal_log"] == 1
+    kept = store.load_history(["light.a"])["light.a"]
+    assert [r[1] for r in kept] == ["off", "on"]  # last pre-cutoff state survives so the grid starts right
+    rep = store.storage_report()
+    assert rep["rows"]["ha_history"] == 2 and "file_mb" in rep
+
+
+def test_aged_slots_fold_into_seasonal_once(slots, tmp_path):
+    from luxador.datalab import DataLab
+
+    store = LuxieStore(tmp_path / "t.db")
+    store.replace_slots("lounge", slots)
+    lab = DataLab(store, {}, {"time_zone": "Europe/London"}, None)
+    cutoff = "2026-11-20T00:00"
+    n = lab.fold_aged_slots("lounge", cutoff)
+    assert n == sum(1 for s in slots if s["slot"] < cutoff)
+    assert lab.fold_aged_slots("lounge", cutoff) == 0  # never double counted
+    summ = d.seasonal_summary(store.load_seasonal("lounge"))
+    assert summ["weeks_covered"] >= 1 and summ["years"] == [2026]
+    wk = summ["weeks"][-1]
+    assert 0 < wk["home_share"] < 1 and wk["bri_when_on"] > 0
+
+
+def test_yearly_sun_model_and_compensation():
+    from zoneinfo import ZoneInfo
+
+    from luxador.seasonal import SeasonalConfig, SeasonalModel, sun_elevation
+
+    ldn = ZoneInfo("Europe/London")
+    assert 61 < sun_elevation(51.5, -0.12, datetime(2026, 6, 21, 13, 0, tzinfo=ldn)) < 63
+    m = SeasonalModel(51.5, -0.12, "Europe/London", SeasonalConfig(enabled=True))
+    v = m.year_view(2026)
+    assert len(v["days"]) == 365 and len(v["hourly_elev"][0]) == 24
+    dec = next(x for x in v["days"] if x["date"] == "2026-12-21")
+    jun = next(x for x in v["days"] if x["date"] == "2026-06-21")
+    assert dec["sunset"].startswith("15:5") and dec["boost_pct"] == 15.0 and dec["evening_shift_min"] == 0
+    assert jun["boost_pct"] == 0 and jun["evening_shift_min"] == 45
+    assert m.now(datetime(2026, 12, 21, 22, 0, tzinfo=ldn))["boost_now_pct"] == 0  # outside the day window
+    syd = SeasonalModel(-33.87, 151.2, "Australia/Sydney", SeasonalConfig()).year_view(2026)
+    assert next(x for x in syd["days"] if x["date"] == "2026-06-21")["boost_pct"] > 10  # southern winter
+
+
+def test_resolver_applies_seasonal_only_when_enabled():
+    from luxador.resolver import resolve_room
+
+    schemas, rooms = load_config_bundle(CFG)
+    now = datetime(2026, 12, 21, 19, 0)
+    inp = d_inputs = None
+    from luxador.models import RoomInputs
+
+    inp = RoomInputs(occupied=True, ambient_lux=5.0, media_state="off")
+    base = resolve_room(rooms["lounge"], schemas, inp, now)
+    season = {"applies": True, "boost_now_pct": 15.0, "kelvin_now": 300, "warp_minutes": 0,
+              "day": {"day_hours": 7.8}}
+    lifted = resolve_room(rooms["lounge"], schemas, inp, now, seasonal=season)
+    a, b = base.roles["overhead"].brightness_pct, lifted.roles["overhead"].brightness_pct
+    assert a > 0 and b == min(100, round(a * 1.15))
+    assert any("Winter lift" in n for n in lifted.roles["overhead"].breakdown.notes)
+    off = resolve_room(rooms["lounge"], schemas, inp, now, seasonal={**season, "applies": False})
+    assert off.roles["overhead"].brightness_pct == a

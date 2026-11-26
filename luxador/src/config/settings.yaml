@@ -12,6 +12,21 @@ outdoor_lux_sensor: ""        # e.g. sensor.garden_illuminance (optional; sun el
 sun_entity: sun.sun
 time_zone: ""                 # blank = Home Assistant's own time zone
 max_states: 28                # most states Luxie may discover from your data (fewer if the data does not support them)
+latitude: ""                  # blank = Home Assistant's home location (used for the yearly sun model)
+longitude: ""
+
+# Seasonal compensation from the yearly sun model (computed for your latitude, so either hemisphere works)
+seasonal:
+  enabled: false              # true = apply to the lights (still subject to dry_run)
+  winter_boost_max_pct: 15    # extra daytime brightness on the shortest day, scaled by how short the day is
+  winter_kelvin_shift: 300    # slightly cooler daytime light on short days
+  summer_shift_factor: 0.33   # evening curve moves by this share of how much later sunset is than at the equinox
+  summer_later_max_min: 45    # ...capped here
+  winter_earlier_max_min: 0   # 0 = never pull evenings earlier in winter
+  day_start: "07:00"          # winter lift applies between these times
+  day_end: "20:00"
+
+detail_days: 90              # days of full detail kept (raw HA history + 5-min grid). Older data is folded into a tiny forever seasonal table.
 
 # OPNsense network signals (laptop online / actively moving data). API key needs
 # 'Diagnostics: ARP Table' + 'Reporting: Traffic' privileges. Prefer env vars for the secret:

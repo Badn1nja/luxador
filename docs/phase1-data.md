@@ -103,8 +103,39 @@ so intent layering still applies. Names you give stick to the state's centre, so
 
 | Phase | What |
 |---|---|
+| 0 · Structure | HOUSE → ROOM → ZONE. Room picker in the UI; HA areas compared with configured rooms (read-only). **(built)** |
 | 1 · Data | Traceback import, 5-minute grid, rule labels, intent model, discovered states, Data Lab. **(built)** |
 | 2 · Learn presence | Name patterns/states, device↔zone links, label ground truth. **(built, grows with use)** |
 | 3 · Learn lighting | Feed the arbitrated intent + each state's per-light behaviour into the resolver, starting from an empty room YAML. |
 | 4 · Custom event log | Your own markers, "trigger" or "suspected" (e.g. *"Fridays ~17:00, people over"*), logged as events with time/day. They join the context strand as features, so they can split or merge discovered states. Same shape as today's time-range labels. |
 | House level | HOUSE → ROOM → ZONE: house-wide states (asleep, away, waking) built from all rooms, which rooms then inherit. Sleep is really a house state, not a lounge state. |
+
+## Storage: nothing grows forever
+
+Measured on a simulated month of live running, one room: the old 5-second tick log was 104 MB/month. Now:
+
+| Data | Kept |
+|---|---|
+| Raw HA history (`ha_history`) and the 5-minute grid (`slots`) | `detail_days` (default 90), the window the models train on |
+| Tick log (`raw_events`, now every 5 min) | 7 days |
+| Audit log (`causal_log`, only real moves ≥ 2 %) | 14 days |
+| `light_samples`, `foreign_writes` | 30 days |
+| `presence_minutes`, `net_minutes` | 30 days |
+| `seasonal` (week × hour × daytype sums), `lts_hourly` | forever, about 1 MB per room |
+
+Slots that age out of the detail window are folded into `seasonal` exactly once. The database is compacted weekly.
+The Luxie tab has a Storage card with live sizes.
+
+## The yearly model
+
+The sun is computed for every hour of the year from the home's latitude/longitude (24 × 365, cached, ~0.4 s),
+so it works from day one and in either hemisphere. Optional **seasonal compensation** (`seasonal.enabled`):
+
+* **Winter lift:** daytime brightness up to +15 % and +300 K on the shortest day, scaled by how short the day
+  is versus the equinox, between `day_start` and `day_end`.
+* **Summer later:** the evening curve shifts later by a third of how much later sunset is than at the equinox
+  (clock time, so DST counts), capped at 45 min. Winter never pulls evenings earlier unless you set
+  `winter_earlier_max_min`.
+
+Your own behaviour accumulates in the `seasonal` table alongside it, so the compensation can later be checked
+against (and learned from) what you actually did.

@@ -20,9 +20,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .datalab import DEFAULT_INTENT_POLICY, RANGES, DataLab
+from .seasonal import SeasonalConfig, SeasonalModel
 from .datalab import add_since_active as d_add_since_active
 from .datalab import series as d_series
 from .ha_bridge import HABridge
+from .house import house_overview
 from .luxie import LuxieStore
 from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSpec
 from .opnsense import OpnsensePoller
@@ -112,6 +114,10 @@ def _load_settings() -> dict[str, Any]:
         "sun_entity": str(data.get("sun_entity") or "sun.sun"),
         "time_zone": str(data.get("time_zone") or ""),
         "max_states": int(data.get("max_states", 28) or 28),
+        "detail_days": int(data.get("detail_days", 90) or 90),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
+        "seasonal": dict(data.get("seasonal") or {}),
         "opnsense": {
             "url": os.environ.get("LUXADOR_OPNSENSE_URL", opn.get("url", "")),
             "api_key": os.environ.get("LUXADOR_OPNSENSE_KEY", opn.get("api_key", "")),
@@ -158,6 +164,8 @@ class EngineRuntime:
         self.datalab = DataLab(self.luxie, self.rooms, self.settings, self.bridge, policy=_load_intent_policy())
         self.last_active_at: dict[str, datetime] = {}
         self.last_datalab_rebuild: datetime | None = None
+        self.last_raw_tick: dict[str, datetime] = {}
+        self.last_vacuum: datetime | None = None
         # SANDBOX ONLY: a static snapshot of the Lounge entities captured once, so the UI has something to
         # show without HA. It is labelled as sandbox data everywhere and never written to the presence tables.
         for rname, rcfg in self.rooms.items():
@@ -219,6 +227,21 @@ class EngineRuntime:
         )
         if inputs.get("occupied") or lights_on or inputs.get("media_state") in ("playing", "buffering"):
             self.last_active_at[room_name] = now
+
+    def seasonal_model(self) -> SeasonalModel:
+        lat = self.settings.get("latitude")
+        lon = self.settings.get("longitude")
+        if lat in (None, "") or lon in (None, ""):
+            lat, lon = self.bridge.latitude, self.bridge.longitude
+        tz_name = self.settings.get("time_zone") or self.bridge.time_zone or "UTC"
+        return SeasonalModel(float(lat) if lat not in (None, "") else None,
+                             float(lon) if lon not in (None, "") else None,
+                             tz_name, SeasonalConfig.from_settings(self.settings.get("seasonal")))
+
+    def seasonal_now(self, now: datetime) -> dict[str, Any]:
+        model = self.seasonal_model()
+        local = now.astimezone(self.datalab.tz()) if now.tzinfo else now.replace(tzinfo=self.datalab.tz())
+        return model.now(local)
 
     def live_intent(self, room_name: str, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now()
@@ -402,6 +425,7 @@ class EngineRuntime:
             learned_offsets=learned_offsets,
             mode_entered_at=self.mode_entered_at.get(room_name),
             overlay_weights=weights,
+            seasonal=self.seasonal_now(now),
         )
         drift = self.luxie.check_lux_drift(room_name, inputs.ambient_lux, now)
         return {
@@ -525,7 +549,10 @@ class EngineRuntime:
                 self.mode_key[rname] = key
                 self.mode_entered_at[rname] = now
 
-            if self.live:  # sandbox ticks are not telemetry
+            last_raw = self.last_raw_tick.get(rname)
+            if self.live and (last_raw is None or (now - last_raw).total_seconds() >= 300):
+                # sandbox ticks are not telemetry; and one row per 5 min is plenty (was every tick = 5 s)
+                self.last_raw_tick[rname] = now
                 self.luxie.record_raw_tick(
                     room=rname,
                     ambient_lux=inputs["ambient_lux"],
@@ -546,7 +573,8 @@ class EngineRuntime:
             for role, r_dict in ev["roles"].items():
                 prev_bri = self.last_applied_bri.get((rname, role))
                 new_bri = r_dict["brightness_pct"]
-                if prev_bri != new_bri:
+                # Log real moves only: on/off, or a change of 2 %+ (target_lux jitter would flood the audit log)
+                if prev_bri is None or (prev_bri == 0) != (new_bri == 0) or abs(new_bri - prev_bri) >= 2:
                     self.luxie.log_causal_event(
                         room=rname,
                         role=role,
@@ -557,7 +585,7 @@ class EngineRuntime:
                         breakdown=r_dict["breakdown"],
                         ts=now,
                     )
-                    self.last_applied_bri[(rname, role)] = new_bri
+                self.last_applied_bri[(rname, role)] = new_bri
                 rev_obj = RoleEvaluation.model_validate(r_dict)
                 cmds.extend(await self.bridge.apply_role(rev_obj))
             self.last_commands[rname] = cmds
@@ -576,6 +604,10 @@ async def _background_loop() -> None:
                 runtime.last_rollup = now
                 runtime.luxie.run_rollup()
                 runtime.luxie.prune_minutes()
+                runtime.luxie.apply_retention({"ha_history": runtime.settings["detail_days"]})
+                if runtime.last_vacuum is None or (now - runtime.last_vacuum).total_seconds() >= 7 * 86400:
+                    runtime.last_vacuum = now
+                    runtime.luxie.vacuum()
             # Phase 1 grid + intent model: refresh hourly from whatever history we hold
             if runtime.last_datalab_rebuild is None or (now - runtime.last_datalab_rebuild).total_seconds() >= 3600:
                 runtime.last_datalab_rebuild = now
@@ -725,7 +757,7 @@ async def list_rooms() -> dict[str, Any]:
     assert runtime is not None
     return {
         "rooms": [
-            {"room": r.room, "friendly_name": r.friendly_name}
+            {"room": r.room, "friendly_name": r.friendly_name, "roles": list(r.bulbs), "zones": list(r.presence.zones)}
             for r in runtime.rooms.values()
         ],
         "dry_run": runtime.bridge.dry_run,
@@ -977,6 +1009,19 @@ async def datalab_name_state(room_name: str, state_id: int, req: StateNameReques
         raise HTTPException(404, f"Unknown state {state_id}")
 
 
+@app.get("/api/house/year")
+async def datalab_year(year: int | None = None) -> dict[str, Any]:
+    """The yearly model: sun for every hour of the year here, and the seasonal compensation it implies."""
+    assert runtime is not None
+    model = runtime.seasonal_model()
+    now = datetime.now(runtime.datalab.tz())
+    out = model.year_view(year or now.year)
+    out["now"] = model.now(now)
+    out["location_source"] = "settings" if runtime.settings.get("latitude") not in (None, "") else (
+        "home_assistant" if runtime.bridge.latitude is not None else None)
+    return out
+
+
 @app.post("/api/datalab/import")
 async def datalab_import(req: ImportRequest) -> dict[str, Any]:
     """Pull recorder history (+ long-term lux statistics) from HA, then rebuild every room's grid and model."""
@@ -1016,6 +1061,31 @@ async def datalab_delete_label(room_name: str, label_id: int) -> dict[str, Any]:
     assert runtime is not None
     runtime.luxie.delete_intent_label(room_name, label_id)
     return runtime.datalab.rebuild(room_name)
+
+
+@app.get("/api/house/areas")
+async def house_areas() -> dict[str, Any]:
+    """Phase 0: Home Assistant's areas vs the rooms Luxador is set up for (read-only)."""
+    assert runtime is not None
+    if not runtime.bridge.connected:
+        return {"available": False, "reason": "Home Assistant not connected", "rooms": sorted(runtime.rooms)}
+    try:
+        areas, devices, entities = await runtime.bridge.fetch_registries()
+    except Exception as exc:
+        return {"available": False, "reason": f"Could not read HA areas: {exc}", "rooms": sorted(runtime.rooms)}
+    return {"available": True, **house_overview(areas, devices, entities, runtime.bridge.states, runtime.rooms)}
+
+
+@app.get("/api/storage")
+async def storage() -> dict[str, Any]:
+    """How big the database is, what's in it, and how long each table is kept."""
+    assert runtime is not None
+    rep = runtime.luxie.storage_report()
+    rep["retention_days"] = {**rep["retention_days"], "ha_history": runtime.settings["detail_days"],
+                             "slots (5-min grid)": runtime.settings["detail_days"],
+                             "presence_minutes / net_minutes": 30, "seasonal": "forever (tiny)",
+                             "lts_hourly": "forever (tiny)"}
+    return rep
 
 
 @app.get("/api/net/hosts")

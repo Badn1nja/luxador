@@ -55,6 +55,8 @@ class HABridge:
         self._recent_cmd: dict[str, tuple[float, int]] = {}  # entity -> (monotonic time, brightness %)
         self._on_state_change = on_state_change
         self.time_zone: str | None = None
+        self.latitude: float | None = None
+        self.longitude: float | None = None
 
     @property
     def configured(self) -> bool:
@@ -97,7 +99,10 @@ class HABridge:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{self.ha_url}/api/config", headers=self._headers())
             resp.raise_for_status()
-            self.time_zone = resp.json().get("time_zone")
+            cfg = resp.json()
+            self.time_zone = cfg.get("time_zone")
+            self.latitude = cfg.get("latitude")
+            self.longitude = cfg.get("longitude")
         return self.time_zone
 
     async def fetch_history(
@@ -135,6 +140,13 @@ class HABridge:
             "period": "hour",
             "types": ["mean", "min", "max"],
         }) or {}
+
+    async def fetch_registries(self) -> tuple[list, list, list]:
+        """HA's area, device and entity registries (where things physically are)."""
+        areas = await self.ws_command({"type": "config/area_registry/list"}) or []
+        devices = await self.ws_command({"type": "config/device_registry/list"}) or []
+        entities = await self.ws_command({"type": "config/entity_registry/list"}) or []
+        return areas, devices, entities
 
     def is_own_change(self, entity_id: str, ctx: dict[str, Any], new_bri: int) -> bool:
         ctx_id = ctx.get("id", "")

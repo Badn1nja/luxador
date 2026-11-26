@@ -239,6 +239,7 @@ def resolve_room(
     learned_offsets: dict[str, float] | None = None,
     mode_entered_at: datetime | None = None,
     overlay_weights: dict[str, float] | None = None,
+    seasonal: dict[str, Any] | None = None,
 ) -> RoomEvaluation:
     """Resolve desired target & causal breakdown for every role in a room.
 
@@ -258,6 +259,9 @@ def resolve_room(
         ov for ov in sorted(room_cfg.overlays, key=lambda o: o.priority) if weights[ov.name] > 0.0
     ]
     warp_minutes = int(round(sum(ov.time_warp_minutes * weights[ov.name] for ov in active_overlays)))
+    season = seasonal if (seasonal and seasonal.get("applies")) else None
+    if season:
+        warp_minutes += int(season.get("warp_minutes", 0))
     effective_time = apply_time_warp(now, warp_minutes)
     active_overlay_names = [ov.name for ov in active_overlays]
     bucket_key = _bucket_for_time(effective_time, [ov.name for ov in active_overlays if weights[ov.name] >= 0.5])
@@ -363,6 +367,8 @@ def resolve_room(
         punch_residual = compute_punch_residual(punches.get(role), now)
 
         notes: list[str] = []
+        if season and season.get("warp_minutes"):
+            notes.append(f"Season: evening {'later' if season['warp_minutes'] < 0 else 'earlier'} by {abs(season['warp_minutes'])} min")
         for ov in active_overlays:
             if weights[ov.name] < 0.999:
                 notes.append(f"{ov.name} easing ({int(weights[ov.name]*100)}%)")
@@ -379,6 +385,14 @@ def resolve_room(
         else:
             applied_learned = learned_offset if working_pct > 0 else 0.0
             final_pct = int(max(0, min(100, round(working_pct + applied_learned + punch_residual))))
+            if season and final_pct > 0 and season.get("boost_now_pct"):
+                boosted = int(min(100, round(final_pct * (1 + season["boost_now_pct"] / 100.0))))
+                if boosted != final_pct:
+                    notes.append(f"Winter lift +{season['boost_now_pct']:.0f}% ({season['day']['day_hours']:.1f} h of daylight)")
+                final_pct = boosted
+            if season and final_pct > 0 and season.get("kelvin_now") and working_color.mode == "kelvin" and working_color.kelvin:
+                k = int(working_color.kelvin + season["kelvin_now"])
+                working_color = working_color.model_copy(update={"kelvin": k, "rgb": kelvin_to_rgb(k)})
 
         roles_out[role] = RoleEvaluation(
             role=role,

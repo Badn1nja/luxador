@@ -163,7 +163,10 @@
 
   <nav class="top-nav">
     <button id="nav-overview" class="active" onclick="showMainView('overview')">🏠 Main Overview</button>
-    <button id="nav-room" onclick="showMainView('room')">🛋️ Room: Lounge</button>
+    <button id="nav-room" onclick="showMainView('room')">🛋️ Room</button>
+    <label class="inline" style="margin-left:auto;color:var(--muted);">Room
+      <select id="roomPicker" onchange="selectRoom(this.value)"></select>
+    </label>
     <button id="nav-luxie" onclick="showMainView('luxie')">🤖 Luxie Logs &amp; Data</button>
     <button id="nav-datalab" onclick="showMainView('datalab')">🔬 Data Lab</button>
   </nav>
@@ -198,6 +201,12 @@
       </div>
 
       <div class="grid" id="overviewRooms"></div>
+
+      <div class="card" style="margin-top:14px;">
+        <div class="row"><h2>🗺️ House › Rooms (from Home Assistant areas)</h2><span class="pill info">Phase 0 · read-only</span></div>
+        <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Luxador is set up for. Add a room by dropping a <code>rooms/&lt;name&gt;.yaml</code> into the app's config folder; this shows what to put in it.</div>
+        <div id="houseAreas" class="muted">Loading…</div>
+      </div>
     </section>
 
     <!-- ROOM WORKSPACE: PRESENCE | TARGETS | TIME | TWEAKS -->
@@ -317,13 +326,7 @@
           </table>
           <div class="controls" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
             <label>Role
-              <select id="newRuleRole">
-                <option value="overhead">overhead</option>
-                <option value="shoelight">shoelight</option>
-                <option value="loungetv">loungetv</option>
-                <option value="mb_desk">mb_desk</option>
-                <option value="kwn_desk">kwn_desk</option>
-              </select>
+              <select id="newRuleRole" data-roles="1"></select>
             </label>
             <label>Time / Zone <input id="newRuleCond" type="text" value="18:00-22:00" style="width:125px" /></label>
             <label>Brightness / Target Lux <input id="newRuleBri" type="text" value="target_lux(140, min=10, max=80)" style="width:210px" /></label>
@@ -351,12 +354,7 @@
               <select id="simDesk"><option value="false">No</option><option value="true">Yes</option></select>
             </label>
             <label>Punch Role
-              <select id="simPunchRole">
-                <option value="">None</option>
-                <option value="shoelight">shoelight</option>
-                <option value="overhead">overhead</option>
-                <option value="loungetv">loungetv</option>
-              </select>
+              <select id="simPunchRole" data-roles="1" data-none="1"></select>
             </label>
             <label>Punch % <input id="simPunchDelta" type="number" value="35" style="width:76px" /></label>
             <label>Punch At <input id="simPunchTime" type="text" value="20:15" style="width:76px" /></label>
@@ -393,7 +391,7 @@
                 <label>Clear Delay (sec) <input id="twClearDelay" type="number" value="180" style="width:95px" /></label>
               </div>
               <div>
-                <button class="btn primary" onclick="saveTweaks()">Save Tweaks to Lounge YAML</button>
+                <button class="btn primary" onclick="saveTweaks()">Save tweaks to room YAML</button>
                 <span id="tweaksMsg" class="muted" style="margin-left:10px;"></span>
               </div>
             </div>
@@ -407,15 +405,15 @@
 
         <div class="card">
           <div class="row" style="margin-bottom:8px;">
-            <h2>📝 Underlying YAML Studio (lounge.yaml &amp; schemas.yaml)</h2>
+            <h2>📝 Underlying YAML Studio (<span class="roomFile">room</span>.yaml &amp; schemas.yaml)</h2>
             <div style="display:flex;gap:8px;">
               <button class="btn" onclick="loadYamls()">Reload From Disk</button>
-              <button class="btn primary" onclick="saveRoomYaml()">Apply lounge.yaml</button>
+              <button class="btn primary" onclick="saveRoomYaml()">Apply <span class="roomFile">room</span>.yaml</button>
             </div>
           </div>
           <div class="grid">
             <div>
-              <div class="muted" style="margin-bottom:4px;">config/rooms/lounge.yaml</div>
+              <div class="muted" style="margin-bottom:4px;">config/rooms/<span class="roomFile">room</span>.yaml</div>
               <textarea id="yamlRoom"></textarea>
               <div id="yamlRoomMsg" class="muted" style="margin-top:4px;"></div>
             </div>
@@ -488,6 +486,18 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;">
+        <div class="row"><h2>The year: sun for every hour, and the seasonal offset</h2><span id="dlYearPill" class="pill"></span></div>
+        <div class="muted" style="margin-bottom:8px;">Computed from your home's latitude, so it works from day one and in either hemisphere. Brighter = higher sun; dark = below the horizon; the line marks today.</div>
+        <div id="dlYearToday" class="breakdown" style="margin-bottom:10px;"></div>
+        <div id="dlYearHeat"></div>
+        <div class="grid" style="margin-top:10px;">
+          <div><div class="muted"><strong>Winter lift</strong>: extra daytime brightness</div><div id="dlYearBoost"></div></div>
+          <div><div class="muted"><strong>Evening shift</strong>: minutes later (+) the evening curve runs</div><div id="dlYearShift"></div></div>
+        </div>
+        <div id="dlYearLearned" class="muted" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
         <div class="row"><h2>Discovered states</h2><span id="dlStatesMeta" class="muted"></span></div>
         <div class="muted" style="margin-bottom:8px;">Found in your data, not configured: each state is a context (time × day × daylight × presence × activity), and under it what every light actually did, including how its brightness shifts with daylight. Name the ones you recognise; names survive rebuilds.</div>
         <div style="overflow-x:auto;"><table id="dlStates"><thead><tr><th>#</th><th>State</th><th>Usually</th><th>Share</th><th>Intent</th><th>What the lights did</th></tr></thead><tbody></tbody></table></div>
@@ -528,6 +538,10 @@
           <h2>Luxie Telemetry Tiers</h2>
           <div id="telemetryStats" class="muted"></div>
         </div>
+        <div class="card">
+          <h2>💾 Storage</h2>
+          <div id="storageStats" class="muted"></div>
+        </div>
       </div>
       <div class="grid" style="margin-bottom:14px;">
         <div class="card">
@@ -549,10 +563,47 @@
   </main>
 
   <script>
-    const ROOM = "lounge";
+    let ROOM = null;
+    let ROOMS = [];
+    let CURRENT_VIEW = "overview";
+
+    async function initRooms() {
+      const data = await fetch("./api/rooms").then(r => r.json());
+      ROOMS = data.rooms;
+      let saved = null;
+      try { saved = localStorage.getItem("luxador.room"); } catch (e) {}
+      ROOM = ROOMS.some(r => r.room === saved) ? saved : (ROOMS[0]?.room || null);
+      document.getElementById("roomPicker").innerHTML = ROOMS.map(r => `<option value="${esc(r.room)}">${esc(r.friendly_name)}</option>`).join("");
+      applyRoomChrome();
+    }
+    function applyRoomChrome() {
+      const r = ROOMS.find(x => x.room === ROOM);
+      if (!r) return;
+      document.getElementById("roomPicker").value = ROOM;
+      document.getElementById("nav-room").textContent = `🛋️ Room: ${r.friendly_name}`;
+      document.querySelectorAll(".roomFile").forEach(e => e.textContent = ROOM);
+      document.querySelectorAll("select[data-roles]").forEach(sel => {
+        const keep = sel.value;
+        sel.innerHTML = (sel.dataset.none ? `<option value="">None</option>` : "") + r.roles.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+        if (r.roles.includes(keep)) sel.value = keep;
+      });
+    }
+    function selectRoom(name) {
+      ROOM = name;
+      try { localStorage.setItem("luxador.room", name); } catch (e) {}
+      applyRoomChrome();
+      showMainView(CURRENT_VIEW === "overview" ? "room" : CURRENT_VIEW);
+    }
+    function openRoom(name, tab) {
+      ROOM = name;
+      try { localStorage.setItem("luxador.room", name); } catch (e) {}
+      applyRoomChrome();
+      showRoomTab(tab);
+    }
     let lastRoomData = null;
 
     function showMainView(name) {
+      CURRENT_VIEW = name;
       document.querySelectorAll(".view").forEach(el => el.classList.remove("active"));
       document.querySelectorAll(".top-nav button").forEach(el => el.classList.remove("active"));
       document.getElementById("view-" + name).classList.add("active");
@@ -597,25 +648,16 @@
           <div class="muted" style="margin-bottom:12px;">Pattern: <code>${r.signature || "empty"}</code> • state from ${r.state_source}</div>
           ${(r.warnings || []).map(w => `<div class="muted" style="color:var(--gold);margin-bottom:6px;">⚠ ${w}</div>`).join("")}
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn primary" onclick="showRoomTab('targets')">Open Lounge</button>
-            <button class="btn" onclick="showRoomTab('presence')">Presence</button>
-            <button class="btn" onclick="showRoomTab('time')">Time &amp; Curves</button>
-            <button class="btn" onclick="showRoomTab('tweaks')">Tweaks</button>
+            <button class="btn primary" onclick="openRoom('${esc(r.room)}', 'targets')">Open ${esc(r.friendly_name)}</button>
+            <button class="btn" onclick="openRoom('${esc(r.room)}', 'presence')">Presence</button>
+            <button class="btn" onclick="openRoom('${esc(r.room)}', 'time')">Time &amp; Curves</button>
+            <button class="btn" onclick="openRoom('${esc(r.room)}', 'tweaks')">Tweaks</button>
           </div>
         </div>
       `).join("");
 
-      const placeholder = `
-        <div class="card dashed">
-          <div class="row">
-            <h2>🛏️ Bedroom (Future Room Slot)</h2>
-            <span class="pill">Placeholder</span>
-          </div>
-          <p class="muted">Once Lounge curves &amp; hints feel great, drop a <code>rooms/bedroom.yaml</code> file to unlock multi-room orchestration and House-level sleep handoff.</p>
-          <button class="btn" disabled>+ Add Room (Coming Next)</button>
-        </div>
-      `;
-      document.getElementById("overviewRooms").innerHTML = cards + placeholder;
+      document.getElementById("overviewRooms").innerHTML = cards;
+      loadHouseAreas();
     }
 
     function updateHeaderBadges(haConnected, dryRun, stateText, drift) {
@@ -839,7 +881,7 @@
       });
       const msg = document.getElementById("tweaksMsg");
       msg.style.color = res.ok ? "var(--green)" : "var(--red)";
-      msg.textContent = res.ok ? "Saved tweaks to lounge.yaml!" : "Error saving tweaks";
+      msg.textContent = res.ok ? `Saved tweaks to ${ROOM}.yaml!` : "Error saving tweaks";
       if (res.ok) refreshRoom();
     }
 
@@ -890,10 +932,7 @@
         const x = pad.l + (i / (pts.length - 1)) * pw;
         ctx.fillText(pts[i].time, x - 14, H - 8);
       }
-      const palette = {
-        overhead: "#f5b942", shoelight: "#ff7b54", loungetv: "#38bdf8",
-        mb_desk: "#3fb950", kwn_desk: "#c084fc", kw_desk_led: "#f472b6"
-      };
+      const palette = Object.fromEntries(data.roles.map((r, k) => [r, seriesColor(k)]));
       const legend = [];
       for (const role of data.roles) {
         const col = palette[role] || "#fff";
@@ -961,6 +1000,7 @@
         <div>Yearly Seasonal Cells: <strong>${t.yearly_baselines}</strong></div>
         <div>Signal Changes: <strong>${t.signal_events}</strong> • Episodes: <strong>${t.episodes}</strong> • Light Samples: <strong>${t.light_samples}</strong></div>
       `;
+      fetch(`./api/storage`).then(r => r.json()).then(renderStorage);
       const [cont, weekly] = await Promise.all([
         fetch(`./api/rooms/${ROOM}/contested`).then(r => r.json()),
         fetch(`./api/learn/${ROOM}/weekly`).then(r => r.json()),
@@ -1162,6 +1202,7 @@
       const s = await fetch(`./api/datalab/${ROOM}`).then(r => r.json());
       DL.summary = s;
       renderDlSummary(s);
+      loadYear();
       await loadSeries();
     }
 
@@ -1478,10 +1519,122 @@
         const t = el("text", { x: W - R - 102 + dx, y: top + 6, "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, lg); t.textContent = k;
       });
     }
-    window.addEventListener("scroll", () => { const t = document.getElementById("dlTip"); if (t) t.style.display = "none"; }, { passive: true });
-    window.addEventListener("resize", () => { if (document.getElementById("view-datalab").classList.contains("active") && DL.series) { renderTimeline(DL.series); renderDlSummary(DL.summary); } });
+    // ---------------------------------------------------------------- storage (Luxie tab)
+    function renderStorage(st) {
+      const keep = (t) => {
+        const v = st.retention_days[t] ?? (t === "slots" ? st.retention_days["slots (5-min grid)"] : undefined);
+        return v === undefined ? "—" : typeof v === "number" ? `${v} d` : String(v);
+      };
+      const top = Object.entries(st.rows).filter(([, n]) => n > 0).slice(0, 8);
+      document.getElementById("storageStats").innerHTML = `
+        <div><span class="kpi">${st.file_mb}</span> MB on disk${st.reclaimable_mb ? ` (${st.reclaimable_mb} MB freed at the next weekly compaction)` : ""}</div>
+        <table style="margin-top:6px;"><thead><tr><th>Table</th><th>Rows</th><th>Kept</th></tr></thead><tbody>${
+          top.map(([t, n]) => `<tr><td>${esc(t)}</td><td>${n.toLocaleString()}</td><td>${esc(keep(t))}</td></tr>`).join("")}</tbody></table>
+        <div style="margin-top:6px;">Full detail for ${st.retention_days["slots (5-min grid)"]} days; older data is folded into the seasonal table (forever, about 1 MB per room).</div>`;
+    }
 
-    loadOverview();
+    // ---------------------------------------------------------------- the year (24 x 365)
+    async function loadYear() {
+      const y = await fetch(`./api/house/year`).then(r => r.json());
+      DL.year = y;
+      renderYear(y);
+    }
+    function renderYear(y) {
+      const pill = document.getElementById("dlYearPill");
+      if (!y.located) {
+        pill.className = "pill"; pill.textContent = "no location";
+        document.getElementById("dlYearToday").textContent = "Needs your home's latitude/longitude: connect Home Assistant, or set latitude/longitude in settings.yaml.";
+        ["dlYearHeat", "dlYearBoost", "dlYearShift"].forEach(id => document.getElementById(id).innerHTML = "");
+        return;
+      }
+      const now = y.now || {};
+      pill.className = "pill " + (now.enabled ? "ok" : "");
+      pill.textContent = now.enabled ? "compensation ON" : "compensation off (preview)";
+      const td = now.day || {};
+      document.getElementById("dlYearToday").innerHTML = `<strong>Today</strong>: sunrise ${td.sunrise ?? "—"}, sunset ${td.sunset ?? "—"}, ${td.day_hours} h of daylight
+        (shortest ${y.min_day_hours.toFixed(1)} h, longest ${y.max_day_hours.toFixed(1)} h) → winter lift <strong>+${now.boost_pct}%</strong>, <strong>+${now.kelvin_shift}K</strong>,
+        evening <strong>${now.evening_shift_min > 0 ? "+" : ""}${now.evening_shift_min} min</strong>. ${now.enabled ? "" : "Set <code>seasonal.enabled: true</code> to apply it."}
+        <span class="muted">(location from ${esc(y.location_source || "?")})</span>`;
+      const learned = DL.summary?.seasonal;
+      document.getElementById("dlYearLearned").textContent = learned?.weeks_covered
+        ? `Learned from your own data so far: ${learned.weeks_covered} weeks of the year (${learned.years.join(", ")}), kept forever as a compact week × hour table.`
+        : "Your own seasonal record starts filling as days age out of the detail window.";
+
+      const host = document.getElementById("dlYearHeat");
+      const W = Math.max(320, host.clientWidth), L = 40, R = 6, rowH = 7, H = 24 * rowH + 20;
+      const days = y.days.length, cw = (W - L - R) / days;
+      const lo = [0x18, 0x4f, 0x95], hi = [0xb7, 0xd3, 0xf6];
+      const maxE = Math.max(1, ...y.hourly_elev.flat());
+      const col = (e) => e <= 0 ? cssv("--panel-2") : `rgb(${lo.map((c, k) => Math.round(c + (hi[k] - c) * Math.min(1, e / maxE))).join(",")})`;
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Sun elevation for every hour of the year" }, host);
+      // one path per colour band: a few dozen nodes instead of 8,760 rects
+      const step = maxE / 12;
+      const bands = {};
+      y.hourly_elev.forEach((hours, di) => hours.forEach((e, h) => {
+        const c = col(e <= 0 ? 0 : Math.max(step, Math.round(e / step) * step));
+        (bands[c] = bands[c] || []).push(`M${(L + di * cw).toFixed(1)},${h * rowH}h${(cw + 0.3).toFixed(2)}v${rowH - 1}h${(-(cw + 0.3)).toFixed(2)}z`);
+      }));
+      Object.entries(bands).forEach(([c, ds]) => el("path", { d: ds.join(""), fill: c }, svg));
+      [0, 6, 12, 18].forEach(h => { const t = el("text", { x: L - 6, y: h * rowH + rowH, "text-anchor": "end", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = `${String(h).padStart(2, "0")}:00`; });
+      ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].forEach((m, k) => {
+        const di = y.days.findIndex(d => d.date.slice(5, 7) === String(k + 1).padStart(2, "0"));
+        const t = el("text", { x: L + di * cw + 2, y: H - 4, fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = m;
+      });
+      const todayIdx = y.days.findIndex(d => d.date === td.date);
+      if (todayIdx >= 0) el("line", { x1: L + todayIdx * cw, x2: L + todayIdx * cw, y1: 0, y2: 24 * rowH, stroke: cssv("--text"), "stroke-width": 1.5 }, svg);
+      const tip = document.getElementById("dlTip");
+      const hit = el("rect", { x: L, y: 0, width: W - L - R, height: 24 * rowH, fill: "transparent" }, svg);
+      hit.addEventListener("mousemove", (ev) => {
+        const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width), py = (ev.clientY - r.top) * (H / r.height);
+        const di = Math.max(0, Math.min(days - 1, Math.floor((px - L) / cw))), h = Math.max(0, Math.min(23, Math.floor(py / rowH)));
+        const d = y.days[di];
+        tip.innerHTML = `<strong>${d.date} ${String(h).padStart(2, "0")}:30</strong><div>sun ${y.hourly_elev[di][h]}°</div><div class="k">sunrise ${d.sunrise ?? "—"} · sunset ${d.sunset ?? "—"} · ${d.day_hours} h</div><div>lift +${d.boost_pct}% · evening ${d.evening_shift_min > 0 ? "+" : ""}${d.evening_shift_min} min</div>`;
+        tip.style.display = "block"; tip.style.left = `${Math.min(window.innerWidth - 220, ev.clientX + 14)}px`; tip.style.top = `${ev.clientY + 14}px`;
+      });
+      hit.addEventListener("mouseleave", () => tip.style.display = "none");
+
+      yearLine("dlYearBoost", y, "boost_pct", (v) => `+${v}%`, todayIdx);
+      yearLine("dlYearShift", y, "evening_shift_min", (v) => `${v > 0 ? "+" : ""}${v} min`, todayIdx);
+    }
+    function yearLine(id, y, key, fmt, todayIdx) {
+      const host = document.getElementById(id);
+      const W = Math.max(260, host.clientWidth), L = 48, R = 8, H = 110, top = 8, bot = 18;
+      const vals = y.days.map(d => d[key]);
+      const lo = Math.min(0, ...vals), hi = Math.max(1, ...vals);
+      const xs = (i) => L + (i * (W - L - R)) / (vals.length - 1), ys = (v) => top + (1 - (v - lo) / (hi - lo)) * (H - top - bot);
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": id }, host);
+      [lo, (lo + hi) / 2, hi].forEach(v => {
+        el("line", { x1: L, x2: W - R, y1: ys(v), y2: ys(v), stroke: cssv("--grid") }, svg);
+        const t = el("text", { x: L - 6, y: ys(v), "text-anchor": "end", "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = fmt(Math.round(v));
+      });
+      el("path", { d: vals.map((v, i) => `${i ? "L" : "M"}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join(""), fill: "none", stroke: cssv("--s1"), "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+      if (todayIdx >= 0) el("circle", { cx: xs(todayIdx), cy: ys(vals[todayIdx]), r: 4.5, fill: cssv("--s1"), stroke: cssv("--panel"), "stroke-width": 2 }, svg);
+      ["Jan", "Apr", "Jul", "Oct"].forEach((m, k) => { const t = el("text", { x: xs(k * 91), y: H - 4, fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = m; });
+    }
+
+    window.addEventListener("scroll", () => { const t = document.getElementById("dlTip"); if (t) t.style.display = "none"; }, { passive: true });
+    window.addEventListener("resize", () => { if (document.getElementById("view-datalab").classList.contains("active") && DL.series) { renderTimeline(DL.series); renderDlSummary(DL.summary); if (DL.year) renderYear(DL.year); } });
+
+    async function loadHouseAreas() {
+      const host = document.getElementById("houseAreas");
+      const h = await fetch("./api/house/areas").then(r => r.json());
+      if (!h.available) { host.textContent = `${h.reason}. Rooms set up in Luxador: ${h.rooms.join(", ") || "none"}.`; return; }
+      const s = h.summary;
+      const cls = { "set up": "ok", "partly set up": "warn", "not set up": "" };
+      host.innerHTML = `<div style="margin-bottom:8px;">${s.areas_with_lights} areas with lights · ${s.set_up} set up · ${s.partly} partly · ${s.not_set_up} not set up</div>
+        <div style="overflow-x:auto;"><table><thead><tr><th>HA area</th><th>Luxador room</th><th>Lights</th><th>Presence</th><th>Lux</th><th>Media</th><th>Not in any room yet</th></tr></thead><tbody>${
+        h.areas.map(a => `<tr>
+          <td><strong>${esc(a.name)}</strong></td>
+          <td><span class="pill ${cls[a.status]}">${a.room ? esc(a.room) : a.status}</span></td>
+          <td>${a.counts.lights}</td><td>${a.counts.presence}</td><td>${a.counts.lux}</td><td>${a.counts.media}</td>
+          <td style="font-size:.75rem;">${Object.entries(a.not_in_any_room).map(([k, v]) => `<div><span class="k">${k}:</span> ${v.map(e => `<code>${esc(e)}</code>`).join(" ")}</div>`).join("") || "—"}</td>
+        </tr>`).join("")}</tbody></table></div>
+        ${h.configured_entities_without_area.length ? `<div style="margin-top:6px;color:var(--gold)">Configured but not in any HA area: ${h.configured_entities_without_area.map(e => `<code>${esc(e)}</code>`).join(" ")}</div>` : ""}`;
+    }
+
+    initRooms().then(loadOverview);
   </script>
 </body>
 </html>

@@ -585,6 +585,71 @@ def coverage(slots: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- seasonal (yearly) memory
+
+def seasonal_cells(slots: list[dict[str, Any]]) -> dict[tuple[int, int, str], dict[str, Any]]:
+    """Sum slots into (ISO week, hour, daytype) cells. Sums + counts, so cells merge across years."""
+    cells: dict[tuple[int, int, str], dict[str, Any]] = {}
+    for s in slots:
+        t = datetime.fromisoformat(s["slot"])
+        key = (t.isocalendar().week, t.hour, s["daytype"])
+        c = cells.setdefault(key, {"n": 0, "occ_n": 0, "occ_known": 0, "light_on": 0, "light_bri_sum": 0.0,
+                                   "lux_in_sum": 0.0, "lux_in_n": 0, "sun_sum": 0.0, "sun_n": 0,
+                                   "roles": defaultdict(lambda: [0, 0.0, 0]), "intents": Counter(), "years": set()})
+        c["n"] += 1
+        c["years"].add(t.year)
+        if s.get("occupied") is not None:
+            c["occ_known"] += 1
+            c["occ_n"] += int(s["occupied"])
+        lm = s.get("light_max")
+        if lm:
+            c["light_on"] += 1
+            c["light_bri_sum"] += lm
+        if s.get("lux_in") is not None:
+            c["lux_in_sum"] += s["lux_in"]
+            c["lux_in_n"] += 1
+        if s.get("sun_elev") is not None:
+            c["sun_sum"] += s["sun_elev"]
+            c["sun_n"] += 1
+        for r, v in (s.get("lights") or {}).items():
+            if v is None:
+                continue
+            rr = c["roles"][r]
+            rr[2] += 1
+            if v > 0:
+                rr[0] += 1
+                rr[1] += v
+        if s.get("intent"):
+            c["intents"][s["intent"]] += 1
+    for c in cells.values():
+        c["roles"] = dict(c["roles"])
+        c["intents"] = dict(c["intents"])
+        c["years"] = sorted(c["years"])
+    return cells
+
+
+def seasonal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per ISO week: how often someone was home, how often lights were on and how bright, mean sun."""
+    weeks: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for r in rows:
+        w = weeks[r["week"]]
+        for k in ("n", "occ_n", "occ_known", "light_on", "light_bri_sum", "sun_sum", "sun_n"):
+            w[k] += r[k]
+    out = []
+    for wk in sorted(weeks):
+        w = weeks[wk]
+        out.append({
+            "week": wk,
+            "slots": int(w["n"]),
+            "home_share": round(w["occ_n"] / w["occ_known"], 2) if w["occ_known"] else None,
+            "lights_on_share": round(w["light_on"] / w["n"], 2) if w["n"] else None,
+            "bri_when_on": round(w["light_bri_sum"] / w["light_on"], 1) if w["light_on"] else None,
+            "sun_mean": round(w["sun_sum"] / w["sun_n"], 1) if w["sun_n"] else None,
+        })
+    years = sorted({y for r in rows for y in json.loads(r["years_json"])})
+    return {"weeks": out, "weeks_covered": len(out), "years": years}
+
+
 # --------------------------------------------------------------------------- orchestration
 
 def intent_by_hour(slots: list[dict[str, Any]]) -> dict[str, list[float]]:
@@ -673,13 +738,28 @@ class DataLab:
         return self.status
 
     # ---- grid + model
+    def detail_days(self) -> int:
+        return int(self.settings.get("detail_days", 90) or 90)
+
+    def fold_aged_slots(self, room: str, cutoff_slot: str) -> int:
+        """Move grid slots older than the detail window into the permanent seasonal table (once each)."""
+        meta = self.store.load_model(room, "seasonal_meta")
+        folded_until = json.loads(meta[1]).get("folded_until", "") if meta else ""
+        old = [s for s in self.store.load_slots(room) if folded_until <= s["slot"] < cutoff_slot]
+        if old:
+            self.store.merge_seasonal(room, seasonal_cells(old))
+            self.store.save_model(room, "seasonal_meta", json.dumps({"folded_until": cutoff_slot}))
+        return len(old)
+
     def rebuild(self, room: str) -> dict[str, Any]:
         ents = self.entities(room)
         span = self.store.history_span()
         if not span["first"]:
             return {"slots": 0}
-        start = parse_ts(span["first"])
         end = datetime.now(timezone.utc)
+        window_start = end - timedelta(days=self.detail_days())
+        start = max(parse_ts(span["first"]), window_start)
+        self.fold_aged_slots(room, floor_slot(start.astimezone(self.tz())).strftime("%Y-%m-%dT%H:%M"))
         hist = self.store.load_history(ents.all(), since_iso=start.isoformat())
         slots = build_slots(ents, hist, start, end, self.tz())
         label_slots(slots, self.store.get_intent_labels(room))
@@ -756,6 +836,8 @@ class DataLab:
                                ents.lux_in, ents.lux_out, self.tz()),
             "intent_by_hour": intent_by_hour(slots),
             "states": self.states(room),
+            "seasonal": seasonal_summary(self.store.load_seasonal(room)),
+            "detail_days": self.detail_days(),
             "sleep_wake": sleep_wake_times(slots),
             "evaluation": json.loads(ev[1]) if ev else None,
             "model_built_at": built[0] if built else None,

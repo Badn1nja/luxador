@@ -231,6 +231,28 @@ class LuxieStore:
                 intent TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            -- Forever, but tiny: every grid slot that ages out of the detail window is folded in here.
+            -- One row per (room, ISO week, hour, daytype): ~2.5k rows per room, ever.
+            CREATE TABLE IF NOT EXISTS seasonal (
+                room TEXT NOT NULL,
+                week INTEGER NOT NULL,
+                hour INTEGER NOT NULL,
+                daytype TEXT NOT NULL,
+                n INTEGER NOT NULL DEFAULT 0,
+                occ_n INTEGER NOT NULL DEFAULT 0,
+                occ_known INTEGER NOT NULL DEFAULT 0,
+                light_on INTEGER NOT NULL DEFAULT 0,
+                light_bri_sum REAL NOT NULL DEFAULT 0,
+                lux_in_sum REAL NOT NULL DEFAULT 0,
+                lux_in_n INTEGER NOT NULL DEFAULT 0,
+                sun_sum REAL NOT NULL DEFAULT 0,
+                sun_n INTEGER NOT NULL DEFAULT 0,
+                roles_json TEXT NOT NULL DEFAULT '{}',
+                intents_json TEXT NOT NULL DEFAULT '{}',
+                years_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (room, week, hour, daytype)
+            );
+
             CREATE TABLE IF NOT EXISTS model_cache (
                 room TEXT NOT NULL,
                 kind TEXT NOT NULL,
@@ -1019,6 +1041,91 @@ class LuxieStore:
             e["issues"] = issues
             e["healthy"] = not issues
         return per
+
+    # ------------------------------------------------------------------ retention: nothing grows forever
+
+    DEFAULT_RETENTION = {
+        "raw_events": 7,        # legacy 5-minute tick log (the grid supersedes it)
+        "causal_log": 14,       # "why am I at X%" audit trail
+        "light_samples": 30,    # actual light levels (the grid also holds these)
+        "signal_events": 90,
+        "foreign_writes": 30,
+        "ha_history": 90,       # raw HA states: the detail window the grid is rebuilt from
+        "episodes": 400,
+    }
+
+    def apply_retention(self, policy: dict[str, int] | None = None) -> dict[str, int]:
+        """Delete rows older than each table's window. ha_history keeps the last state per entity before the
+        cutoff, so the grid's step functions still start from a known state."""
+        pol = {**self.DEFAULT_RETENTION, **(policy or {})}
+        now = datetime.now(timezone.utc)
+        deleted: dict[str, int] = {}
+        simple = {"raw_events": "ts", "causal_log": "ts", "light_samples": "ts", "signal_events": "ts",
+                  "foreign_writes": "ts", "episodes": "end_ts"}
+        for table, col in simple.items():
+            cutoff = _utc_iso(now - timedelta(days=pol[table]))
+            deleted[table] = self._conn.execute(f"DELETE FROM {table} WHERE {col} < ?", (cutoff,)).rowcount
+        cutoff = _utc_iso(now - timedelta(days=pol["ha_history"]))
+        deleted["ha_history"] = self._conn.execute(
+            """DELETE FROM ha_history WHERE ts < :c AND (entity_id, ts) NOT IN
+               (SELECT entity_id, MAX(ts) FROM ha_history WHERE ts < :c GROUP BY entity_id)""",
+            {"c": cutoff},
+        ).rowcount
+        self._conn.commit()
+        return deleted
+
+    def vacuum(self) -> None:
+        """Give freed pages back to the disk (SQLite files don't shrink on DELETE alone)."""
+        self._conn.execute("VACUUM")
+
+    def storage_report(self) -> dict[str, Any]:
+        tables = [r[0] for r in self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        rows = {t: self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
+        page_size = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
+        free = self._conn.execute("PRAGMA freelist_count").fetchone()[0]
+        return {
+            "file_mb": round(page_size * pages / 1e6, 2),
+            "reclaimable_mb": round(page_size * free / 1e6, 2),
+            "rows": dict(sorted(rows.items(), key=lambda kv: -kv[1])),
+            "retention_days": self.DEFAULT_RETENTION,
+        }
+
+    # ------------------------------------------------------------------ seasonal (yearly) memory
+
+    def merge_seasonal(self, room: str, cells: dict[tuple[int, int, str], dict[str, Any]]) -> None:
+        for (week, hour, daytype), c in cells.items():
+            row = self._conn.execute(
+                "SELECT * FROM seasonal WHERE room = ? AND week = ? AND hour = ? AND daytype = ?",
+                (room, week, hour, daytype),
+            ).fetchone()
+            roles = json.loads(row["roles_json"]) if row else {}
+            for r, (on, bri, n) in c["roles"].items():
+                o = roles.get(r, [0, 0.0, 0])
+                roles[r] = [o[0] + on, round(o[1] + bri, 1), o[2] + n]
+            intents = json.loads(row["intents_json"]) if row else {}
+            for it, n in c["intents"].items():
+                intents[it] = intents.get(it, 0) + n
+            years = sorted(set(json.loads(row["years_json"]) if row else []) | set(c["years"]))
+            vals = [c[k] + (row[k] if row else 0) for k in
+                    ("n", "occ_n", "occ_known", "light_on", "light_bri_sum", "lux_in_sum", "lux_in_n", "sun_sum", "sun_n")]
+            self._conn.execute(
+                """INSERT INTO seasonal (room, week, hour, daytype, n, occ_n, occ_known, light_on, light_bri_sum,
+                       lux_in_sum, lux_in_n, sun_sum, sun_n, roles_json, intents_json, years_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(room, week, hour, daytype) DO UPDATE SET n = excluded.n, occ_n = excluded.occ_n,
+                     occ_known = excluded.occ_known, light_on = excluded.light_on, light_bri_sum = excluded.light_bri_sum,
+                     lux_in_sum = excluded.lux_in_sum, lux_in_n = excluded.lux_in_n, sun_sum = excluded.sun_sum,
+                     sun_n = excluded.sun_n, roles_json = excluded.roles_json, intents_json = excluded.intents_json,
+                     years_json = excluded.years_json""",
+                (room, week, hour, daytype, *vals, json.dumps(roles), json.dumps(intents), json.dumps(years)),
+            )
+        self._conn.commit()
+
+    def load_seasonal(self, room: str) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT * FROM seasonal WHERE room = ? ORDER BY week, daytype, hour", (room,)).fetchall()]
 
     def get_telemetry_summary(self, room: str) -> dict[str, Any]:
         raw_count = self._conn.execute("SELECT COUNT(*) FROM raw_events WHERE room = ?", (room,)).fetchone()[0]
