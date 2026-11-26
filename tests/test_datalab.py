@@ -271,3 +271,61 @@ def test_resolver_applies_seasonal_only_when_enabled():
     assert any("Winter lift" in n for n in lifted.roles["overhead"].breakdown.notes)
     off = resolve_room(rooms["lounge"], schemas, inp, now, seasonal={**season, "applies": False})
     assert off.roles["overhead"].brightness_pct == a
+
+
+def _lab(tmp_path):
+    from luxador.datalab import DataLab
+
+    _, rooms = load_config_bundle(CFG)
+    store = LuxieStore(tmp_path / "t.db")
+    store.store_history(d.normalize_history(household()))
+
+    class NoHA:
+        configured = False
+        time_zone = "Europe/London"
+        states: dict = {}
+
+    lab = DataLab(store, rooms, {"time_zone": "Europe/London"}, NoHA())
+    lab.rebuild("lounge")
+    return lab
+
+
+def test_switchboard_merge_unmerge_and_links_survive_rebuild(tmp_path):
+    lab = _lab(tmp_path)
+    before = lab.states("lounge")
+    sleepers = [s["id"] for s in before["states"] if s["intent"] == "sleep"][:3]
+    merged = lab.merge_states("lounge", sleepers)
+    assert len(merged["states"]) == len(before["states"]) - (len(sleepers) - 1)
+    big = max(merged["states"], key=lambda s: s["merged_from"])
+    assert big["merged_from"] == len(sleepers)
+
+    lab.link_state("lounge", big["id"], "shoelight", "pinned", brightness=5, kelvin=2200)
+    lab.name_state("lounge", big["id"], "Deep night")
+    lab.rebuild("lounge")  # numbers may change; links, names and merges must not
+    again = next(s for s in lab.states("lounge")["states"] if s["merged_from"] == len(sleepers))
+    assert again["links"]["shoelight"] == {"mode": "pinned", "brightness": 5.0, "kelvin": 2200, "locked": False}
+    assert again["name"] == "Deep night"
+
+    ds = lab.state_dataset("lounge", again["id"])
+    assert sum(ds["hours"]) == ds["slots"] > 0 and ds["sun"].get("night", 0) > 0.5
+
+    lab.link_state("lounge", again["id"], "shoelight", "learned")
+    assert "shoelight" not in lab._state("lounge", again["id"])["links"]
+    after = lab.unmerge_state("lounge", again["id"])
+    assert len(after["states"]) == len(before["states"])
+
+    with pytest.raises(ValueError):
+        lab.link_state("lounge", 0, "nope", "off")
+    with pytest.raises(ValueError):
+        lab.merge_states("lounge", [0])
+
+
+def test_locked_links_resist_changes(tmp_path):
+    lab = _lab(tmp_path)
+    sid = lab.states("lounge")["states"][0]["id"]
+    lab.link_state("lounge", sid, "overhead", "pinned", brightness=40, locked=True)
+    with pytest.raises(PermissionError):
+        lab.link_state("lounge", sid, "overhead", "off")
+    lab.link_state("lounge", sid, "overhead", "pinned", brightness=40, locked=False)  # unlock
+    lab.link_state("lounge", sid, "overhead", "off")
+    assert lab._state("lounge", sid)["links"]["overhead"]["mode"] == "off"

@@ -147,6 +147,57 @@
     .postbar { display: grid; grid-template-columns: 80px 1fr 42px; gap: 8px; align-items: center; font-size: 0.8rem; margin: 3px 0; }
     .postbar .track { height: 8px; background: #0a0d12; border-radius: 4px; overflow: hidden; }
     .postbar .fill { height: 100%; border-radius: 4px; }
+    /* ---- Luxie switchboard (TUI) ---- */
+    .tui { --t-bg: #0a0d12; --t-line: #2b3547; --t-fg: #d6e2ee; --t-dim: #7d8a99; --t-hi: #ffb36b; --t-sel: rgba(255, 123, 84, 0.16);
+      background: var(--t-bg); border: 1px solid var(--t-line); border-radius: 12px; color: var(--t-fg);
+      font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 0.82rem; outline: none; }
+    .tui:focus-visible { box-shadow: 0 0 0 2px rgba(255, 123, 84, .5); }
+    .tui b { color: var(--t-hi); font-weight: 700; }
+    .tui-dim { color: var(--t-dim); font-weight: 400; }
+    .tui-head { display: flex; gap: 14px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--t-line); }
+    .tui-title { font-weight: 800; letter-spacing: .12em; color: var(--t-hi); margin-bottom: 6px; }
+    .tui-bubble { position: relative; background: #151b24; border: 1px solid var(--t-line); border-radius: 10px; padding: 8px 12px; max-width: 760px; }
+    .tui-bubble::before { content: ""; position: absolute; left: -7px; top: 14px; width: 12px; height: 12px; background: #151b24;
+      border-left: 1px solid var(--t-line); border-bottom: 1px solid var(--t-line); transform: rotate(45deg); }
+    .luxie-cat svg { display: block; filter: drop-shadow(0 4px 10px rgba(192, 132, 252, .25)); }
+    .lx-eyes { transform-origin: 60px 62px; animation: lxBlink 5.5s infinite; }
+    @keyframes lxBlink { 0%, 93%, 100% { transform: scaleY(1); } 95%, 97% { transform: scaleY(.08); } }
+    .lx-bulb { animation: lxGlow 3s ease-in-out infinite; }
+    @keyframes lxGlow { 50% { filter: drop-shadow(0 0 6px #ffe27a); } }
+    @media (prefers-reduced-motion: reduce) { .lx-eyes, .lx-bulb { animation: none; } }
+    .tui-body { display: grid; grid-template-columns: minmax(260px, 38%) 1fr; min-height: 420px; }
+    @media (max-width: 760px) { .tui-body { grid-template-columns: 1fr; } }
+    .tui-pane { padding: 10px 12px; min-width: 0; }
+    .tui-list { border-right: 1px solid var(--t-line); max-height: 560px; overflow: auto; }
+    .tui-pane-title { color: var(--t-dim); letter-spacing: .14em; font-size: .72rem; margin-bottom: 8px; }
+    .sw-row { display: grid; grid-template-columns: 16px 26px 1fr 44px; gap: 6px; padding: 3px 6px; border-radius: 6px; cursor: pointer; align-items: baseline; }
+    .sw-row:hover { background: #121822; }
+    .sw-row.sel { background: var(--t-sel); outline: 1px solid rgba(255, 123, 84, .45); }
+    .sw-row .mk { color: var(--t-hi); }
+    .sw-row .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sw-row .sh { color: var(--t-dim); text-align: right; }
+    .sw-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+    .sw-live { color: #3fb950; }
+    .sw-block { margin-bottom: 12px; }
+    .sw-k { color: var(--t-dim); display: inline-block; width: 64px; }
+    .sw-spark { letter-spacing: 1px; color: #6da7ec; }
+    .sw-bulbs { width: 100%; border-collapse: collapse; }
+    .sw-bulbs td, .sw-bulbs th { padding: 4px 6px; border-bottom: 1px dashed var(--t-line); text-align: left; font-weight: 400; }
+    .sw-bulbs tr.pick { background: var(--t-sel); }
+    .sw-mode { display: inline-flex; gap: 3px; }
+    .sw-mode button, .sw-lock { font: inherit; background: #121822; color: var(--t-dim); border: 1px solid var(--t-line); border-radius: 5px; padding: 1px 6px; cursor: pointer; }
+    .sw-mode button.on { color: #0a0d12; background: var(--t-hi); border-color: var(--t-hi); }
+    .sw-lock.on { color: var(--t-hi); border-color: var(--t-hi); }
+    .tui-keys { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--t-line); color: var(--t-dim); }
+    /* lift tuning */
+    .lift { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 8px 22px; margin: 8px 0 10px; }
+    .lift label { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+    .lift label { padding-right: 10px; border-right: 1px solid var(--border); }
+    .lift label .t { flex: 0 0 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lift input[type=range] { flex: 1; accent-color: var(--accent); }
+    .lift .v { min-width: 58px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+    .lockbtn { background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; padding: 1px 6px; color: var(--muted); }
+    .lockbtn.on { color: var(--gold); border-color: var(--gold); }
   </style>
 </head>
 <body>
@@ -167,7 +218,8 @@
     <label class="inline" style="margin-left:auto;color:var(--muted);">Room
       <select id="roomPicker" onchange="selectRoom(this.value)"></select>
     </label>
-    <button id="nav-luxie" onclick="showMainView('luxie')">🤖 Luxie Logs &amp; Data</button>
+    <button id="nav-switch" onclick="showMainView('switch')">🐱 Luxie</button>
+    <button id="nav-luxie" onclick="showMainView('luxie')">📜 Logs</button>
     <button id="nav-datalab" onclick="showMainView('datalab')">🔬 Data Lab</button>
   </nav>
 
@@ -489,6 +541,7 @@
         <div class="row"><h2>The year: sun for every hour, and the seasonal offset</h2><span id="dlYearPill" class="pill"></span></div>
         <div class="muted" style="margin-bottom:8px;">Computed from your home's latitude, so it works from day one and in either hemisphere. Brighter = higher sun; dark = below the horizon; the line marks today.</div>
         <div id="dlYearToday" class="breakdown" style="margin-bottom:10px;"></div>
+        <div id="dlYearTune"></div>
         <div id="dlYearHeat"></div>
         <div class="grid" style="margin-top:10px;">
           <div><div class="muted"><strong>Winter lift</strong>: extra daytime brightness</div><div id="dlYearBoost"></div></div>
@@ -523,6 +576,57 @@
         </div>
       </div>
       <div id="dlTip" class="dl-tip" role="tooltip"></div>
+    </section>
+
+    <!-- LUXIE: the switchboard (states x bulbs), terminal-style -->
+    <section id="view-switch" class="view">
+      <div class="tui" id="tui" tabindex="0" aria-label="Luxie switchboard. Keys: up/down select, space mark, m merge, u unmerge, n name, 1-9 pick bulb, l p o i set mode, x lock">
+        <div class="tui-head">
+          <div class="luxie-cat" aria-hidden="true">
+            <svg viewBox="0 0 120 120" width="96" height="96">
+              <defs>
+                <radialGradient id="lxFur" cx="50%" cy="40%" r="65%"><stop offset="0" stop-color="#f6ecff"/><stop offset="1" stop-color="#cdb8f0"/></radialGradient>
+                <radialGradient id="lxEye" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#ffd27a"/><stop offset=".55" stop-color="#ff8a4c"/><stop offset="1" stop-color="#7a2e9e"/></radialGradient>
+              </defs>
+              <path d="M22 50 L18 10 L48 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <path d="M98 50 L102 10 L72 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <path d="M24 44 L23 18 L42 33 Z" fill="#ffb3c8"/><path d="M96 44 L97 18 L78 33 Z" fill="#ffb3c8"/>
+              <ellipse cx="60" cy="64" rx="44" ry="38" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <g class="lx-eyes">
+                <ellipse cx="42" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
+                <ellipse cx="78" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
+                <ellipse cx="42" cy="64" rx="4" ry="9" fill="#2a0f3d"/><ellipse cx="78" cy="64" rx="4" ry="9" fill="#2a0f3d"/>
+                <circle cx="38" cy="55" r="4" fill="#fff"/><circle cx="74" cy="55" r="4" fill="#fff"/>
+                <circle cx="46" cy="70" r="1.8" fill="#fff"/><circle cx="82" cy="70" r="1.8" fill="#fff"/>
+              </g>
+              <ellipse cx="30" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/><ellipse cx="90" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/>
+              <path d="M56 78 q4 4 4 0 q0 4 4 0" fill="none" stroke="#3b1b55" stroke-width="2" stroke-linecap="round"/>
+              <path d="M57 74 l3 2.5 l3 -2.5 z" fill="#ff7b9c"/>
+              <g stroke="#8c6fc4" stroke-width="1.5" stroke-linecap="round"><path d="M14 72 l16 2"/><path d="M14 80 l16 -1"/><path d="M106 72 l-16 2"/><path d="M106 80 l-16 -1"/></g>
+              <path d="M32 98 q28 12 56 0" fill="none" stroke="#ff7b54" stroke-width="5" stroke-linecap="round"/>
+              <g class="lx-bulb"><circle cx="60" cy="108" r="7" fill="#ffe27a" stroke="#c98500" stroke-width="1.5"/><rect x="56.5" y="112" width="7" height="5" rx="1.5" fill="#8b949e"/></g>
+            </svg>
+          </div>
+          <div class="tui-say">
+            <div class="tui-title">LUXIE <span class="tui-dim">· switchboard · room <span id="swRoom"></span></span></div>
+            <div id="swSay" class="tui-bubble">…</div>
+          </div>
+        </div>
+        <div class="tui-body">
+          <div class="tui-pane tui-list">
+            <div class="tui-pane-title">STATES <span id="swMeta" class="tui-dim"></span></div>
+            <div id="swList" role="listbox" aria-label="Discovered states"></div>
+          </div>
+          <div class="tui-pane tui-detail">
+            <div class="tui-pane-title" id="swDetailTitle">STATE</div>
+            <div id="swDetail"></div>
+          </div>
+        </div>
+        <div class="tui-keys">
+          <span><b>↑↓</b>/<b>jk</b> select</span><span><b>space</b> mark</span><span><b>m</b> merge marked</span><span><b>u</b> unmerge</span>
+          <span><b>n</b> name</span><span><b>1-9</b> pick bulb</span><span><b>l</b>earned <b>p</b>in <b>o</b>ff <b>i</b>gnore</span><span><b>x</b> lock</span>
+        </div>
+      </div>
     </section>
 
     <section id="view-luxie" class="view">
@@ -612,6 +716,7 @@
       if (name === "room") refreshRoom();
       if (name === "luxie") loadLuxie();
       if (name === "datalab") loadDataLab();
+      if (name === "switch") loadSwitch(false);
     }
 
     function showRoomTab(sub) {
@@ -1295,7 +1400,8 @@
 
     function renderStates(m) {
       const meta = document.getElementById("dlStatesMeta");
-      meta.textContent = m.k ? `${m.k} states · silhouette ${m.silhouette}` : (m.reason || "none yet");
+      const merges = (m.states || []).filter(s => s.merged_from > 1).length;
+      meta.textContent = m.k ? `${(m.states || []).length} states (found ${m.k}${merges ? `, ${merges} merged by you` : ""}) · silhouette ${m.silhouette}` : (m.reason || "none yet");
       const SUN = ["night", "twilight", "low", "high"];
       document.querySelector("#dlStates tbody").innerHTML = (m.states || []).map(st => {
         const lights = Object.entries(st.lights || {}).filter(([, v]) => v.on_ratio > 0).map(([role, v]) => {
@@ -1594,6 +1700,7 @@
       });
       hit.addEventListener("mouseleave", () => tip.style.display = "none");
 
+      renderLift(y);
       yearLine("dlYearBoost", y, "boost_pct", (v) => `+${v}%`, todayIdx);
       yearLine("dlYearShift", y, "evening_shift_min", (v) => `${v > 0 ? "+" : ""}${v} min`, todayIdx);
     }
@@ -1633,6 +1740,210 @@
         </tr>`).join("")}</tbody></table></div>
         ${h.configured_entities_without_area.length ? `<div style="margin-top:6px;color:var(--gold)">Configured but not in any HA area: ${h.configured_entities_without_area.map(e => `<code>${esc(e)}</code>`).join(" ")}</div>` : ""}`;
     }
+
+    // ===================================================================== LIFT TUNING (glass box + locks)
+    const LIFT_FIELDS = [
+      ["winter_boost_max_pct", "Winter lift (max)", 1, (v) => `+${Math.round(v)}%`],
+      ["winter_kelvin_shift", "Winter cooler light", 50, (v) => `+${Math.round(v)}K`],
+      ["summer_shift_factor", "Summer: follow sunset by", 0.01, (v) => `${Math.round(v * 100)}%`],
+      ["summer_later_max_min", "Summer: latest shift", 5, (v) => `+${Math.round(v)} min`],
+      ["winter_earlier_max_min", "Winter: earliest shift", 5, (v) => `−${Math.round(v)} min`],
+    ];
+    let liftTimer = null;
+    function renderLift(y) {
+      const host = document.getElementById("dlYearTune");
+      if (!host) return;
+      if (!y.located) { host.innerHTML = ""; return; }
+      const cfg = y.config || {}, locks = new Set(y.locks || []), lim = y.limits || {}, m = y.now?.math || {};
+      const lockBtn = (k) => `<button class="lockbtn ${locks.has(k) ? "on" : ""}" title="${locks.has(k) ? "Locked: nothing (not you, a reset, or auto-tune) can change this" : "Lock this value"}" onclick="toggleLiftLock('${k}', ${!locks.has(k)})">${locks.has(k) ? "🔒" : "🔓"}</button>`;
+      host.innerHTML = `
+        <div class="row" style="margin-bottom:4px;">
+          <label class="inline"><input type="checkbox" ${cfg.enabled ? "checked" : ""} ${locks.has("enabled") ? "disabled" : ""} onchange="tuneLift({enabled: this.checked}, true)" /> Apply to the lights</label>
+          <span>${lockBtn("enabled")} <button class="btn" onclick="resetLift()">Reset to settings.yaml</button></span>
+        </div>
+        <div class="lift">${LIFT_FIELDS.map(([k, label, step, fmt]) => {
+          const [lo, hi] = lim[k] || [0, 100];
+          return `<label title="${esc(label)}"><span class="t">${esc(label)}</span>
+            <input type="range" min="${lo}" max="${hi}" step="${step}" value="${cfg[k]}" ${locks.has(k) ? "disabled" : ""}
+              oninput="this.nextElementSibling.textContent=(${fmt.toString()})(+this.value); tuneLift({${k}: +this.value})" />
+            <span class="v">${fmt(cfg[k])}</span>${lockBtn(k)}</label>`;
+        }).join("")}
+          <label><span class="t">Lift between</span><input type="time" value="${cfg.day_start}" ${locks.has("day_start") ? "disabled" : ""} onchange="tuneLift({day_start: this.value}, true)" />
+            and <input type="time" value="${cfg.day_end}" ${locks.has("day_end") ? "disabled" : ""} onchange="tuneLift({day_end: this.value}, true)" /> ${lockBtn("day_start")}</label>
+        </div>
+        <div class="breakdown"><strong>How today's numbers are worked out</strong>
+          <div>Deficit = ${esc(m.deficit_formula || "")} = (12 − ${m.day_hours}) ÷ (12 − ${m.shortest_hours}) = <strong>${Math.round((y.now?.deficit || 0) * 100)}%</strong></div>
+          <div>Lift = ${esc(m.boost_formula || "")} = <strong>+${y.now?.boost_pct}%</strong> and +${y.now?.kelvin_shift}K, only between ${cfg.day_start} and ${cfg.day_end}</div>
+          <div>Evening = ${esc(m.shift_formula || "")}; sunset is ${m.sunset_vs_equinox_min == null ? "—" : (m.sunset_vs_equinox_min >= 0 ? "+" : "") + m.sunset_vs_equinox_min + " min"} vs the equinox → <strong>${y.now?.evening_shift_min} min</strong></div>
+        </div>`;
+    }
+    function tuneLift(values, now = false) {
+      clearTimeout(liftTimer);
+      const send = async () => {
+        const res = await fetch(`./api/house/seasonal`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ values }) });
+        const y = await res.json();
+        if (!res.ok) { alert(y.detail || "Could not change that"); return loadYear(); }
+        DL.year = y; renderYear(y);
+      };
+      if (now) send(); else liftTimer = setTimeout(send, 250);
+    }
+    async function toggleLiftLock(key, on) {
+      const locks = { [key]: on };
+      if (key === "day_start") locks.day_end = on;
+      const y = await fetch(`./api/house/seasonal`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ locks }) }).then(r => r.json());
+      DL.year = y; renderYear(y);
+    }
+    async function resetLift() {
+      const y = await fetch(`./api/house/seasonal`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ reset: true }) }).then(r => r.json());
+      DL.year = y; renderYear(y);
+    }
+
+    // ===================================================================== LUXIE SWITCHBOARD
+    const SW = { states: [], roles: [], sel: 0, marked: new Set(), role: 0, live: null, detail: null };
+    const SPARK = "▁▂▃▄▅▆▇█";
+    const spark = (vals) => { const mx = Math.max(1, ...vals.map(v => v || 0)); return vals.map(v => v ? SPARK[Math.min(7, Math.floor((v / mx) * 7.99))] : "·").join(""); };
+    const bar = (share, w = 14) => "█".repeat(Math.round(share * w)) + "░".repeat(w - Math.round(share * w));
+
+    async function loadSwitch(keepSel = true) {
+      document.getElementById("swRoom").textContent = ROOM;
+      const d = await fetch(`./api/luxie/${ROOM}/states`).then(r => r.json());
+      const prevId = SW.states[SW.sel]?.id;
+      SW.states = d.states || []; SW.roles = d.roles || []; SW.live = d.live;
+      SW.sel = keepSel && prevId != null ? Math.max(0, SW.states.findIndex(s => s.id === prevId)) : 0;
+      SW.marked = new Set([...SW.marked].filter(id => SW.states.some(s => s.id === id)));
+      document.getElementById("swMeta").textContent = SW.states.length ? `${SW.states.length} found · k=${d.k}` : "";
+      renderSwList();
+      await loadSwDetail();
+      document.getElementById("tui").focus({ preventScroll: true });
+    }
+
+    function luxieSays(msg) { document.getElementById("swSay").innerHTML = msg; }
+
+    function renderSwList() {
+      const host = document.getElementById("swList");
+      if (!SW.states.length) {
+        host.innerHTML = `<div class="tui-dim">No states yet.</div>`;
+        luxieSays("Nya… I haven't found any states yet. Import some history in the <b>Data Lab</b> and I'll sniff them out~");
+        return;
+      }
+      host.innerHTML = SW.states.map((s, i) => `
+        <div class="sw-row ${i === SW.sel ? "sel" : ""}" role="option" aria-selected="${i === SW.sel}" onclick="swSelect(${i})">
+          <span class="mk">${SW.marked.has(s.id) ? "◆" : ""}</span>
+          <span>${String(s.id).padStart(2, "0")}</span>
+          <span class="nm"><span class="sw-dot" style="background:${intentColor(s.intent)}"></span>${esc(s.name || s.description)}${s.merged_from > 1 ? ` <span class="tui-dim">⧉${s.merged_from}</span>` : ""}${Object.keys(s.links || {}).length ? ` <span class="tui-dim">⚑${Object.keys(s.links).length}</span>` : ""}${SW.live && SW.live.id === s.id ? ` <span class="sw-live">● now</span>` : ""}</span>
+          <span class="sh">${Math.round(s.share * 100)}%</span>
+        </div>`).join("");
+      host.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+    }
+
+    async function loadSwDetail() {
+      const st = SW.states[SW.sel];
+      if (!st) { document.getElementById("swDetail").innerHTML = ""; return; }
+      SW.detail = await fetch(`./api/luxie/${ROOM}/states/${st.id}`).then(r => r.json());
+      renderSwDetail();
+    }
+
+    function renderSwDetail() {
+      const d = SW.detail, st = d.state;
+      document.getElementById("swDetailTitle").innerHTML = `STATE ${String(st.id).padStart(2, "0")} <span class="tui-dim">· ${esc(st.description)}</span>`;
+      const days = ["M", "T", "W", "T", "F", "S", "S"];
+      const sunOrder = ["night", "twilight", "low", "high"];
+      const rows = SW.roles.map((role, k) => {
+        const learned = st.lights?.[role];
+        const link = st.links?.[role];
+        const mode = link?.mode || "learned";
+        const curve = sunOrder.filter(b => learned?.by_daylight?.[b] != null).map(b => `${b[0]}${Math.round(learned.by_daylight[b])}`).join(" ");
+        const btn = (m, label) => `<button class="${mode === m ? "on" : ""}" onclick="swLink('${esc(role)}','${m}')" title="${m}">${label}</button>`;
+        return `<tr class="${k === SW.role ? "pick" : ""}" onclick="SW.role=${k};renderSwDetail()">
+          <td><b>${k + 1}</b> ${esc(role)}</td>
+          <td>${learned && learned.on_ratio > 0 ? `on ${Math.round(learned.on_ratio * 100)}% · ~${Math.round(learned.median_when_on)}%${learned.median_kelvin ? " · " + learned.median_kelvin + "K" : ""} <span class="tui-dim">${curve}</span>` : `<span class="tui-dim">off here</span>`}</td>
+          <td><span class="sw-mode">${btn("learned", "L")}${btn("pinned", "P")}${btn("off", "O")}${btn("ignore", "I")}</span>
+            ${mode === "pinned" ? ` <span class="tui-dim">${link.brightness}%${link.kelvin ? " " + link.kelvin + "K" : ""}</span>` : ""}</td>
+          <td><button class="sw-lock ${link?.locked ? "on" : ""}" onclick="event.stopPropagation();swLock('${esc(role)}')" title="lock">${link?.locked ? "🔒" : "🔓"}</button></td>
+        </tr>`;
+      }).join("");
+      document.getElementById("swDetail").innerHTML = `
+        <div class="sw-block">
+          <div><span class="sw-k">name</span>${esc(st.name || "—")} <span class="tui-dim">(press n)</span></div>
+          <div><span class="sw-k">intent</span><span class="sw-dot" style="background:${intentColor(st.intent)}"></span>${esc(st.intent || "—")} <span class="tui-dim">${Math.round((st.intent_purity || 0) * 100)}% of its slots</span></div>
+          <div><span class="sw-k">size</span>${d.slots} slots · ${Math.round(st.share * 100)}% of the time${st.merged_from > 1 ? ` · merged from ${st.merged_from} <span class="tui-dim">(u to split)</span>` : ""}</div>
+        </div>
+        <div class="sw-block">
+          <div><span class="sw-k">hour</span><span class="sw-spark">${spark(d.hours)}</span> <span class="tui-dim">00→23</span></div>
+          <div><span class="sw-k">weekday</span>${days.map((x, i) => `${x}<span class="sw-spark">${spark(d.weekdays)[i]}</span>`).join(" ")}</div>
+          <div><span class="sw-k">sun</span>${sunOrder.map(b => `${b} <span class="sw-spark">${bar(d.sun[b] || 0, 6)}</span> ${Math.round((d.sun[b] || 0) * 100)}%`).join("  ")}</div>
+          <div><span class="sw-k">lux in</span><span class="sw-spark">${spark(d.lux_in_by_hour.map(v => v || 0))}</span> <span class="tui-dim">median by hour</span></div>
+          <div><span class="sw-k">recent</span><span class="sw-spark">${spark(d.recent_days.map(x => x.minutes))}</span> <span class="tui-dim">${d.recent_days.length ? `${d.recent_days[0].date} → ${d.recent_days[d.recent_days.length - 1].date}` : "—"}</span></div>
+        </div>
+        <div class="tui-pane-title">BULBS IN THIS STATE <span class="tui-dim">L learned · P pinned · O off · I ignore (hands off)</span></div>
+        <table class="sw-bulbs"><tbody>${rows}</tbody></table>`;
+      const pinned = Object.values(st.links || {}).filter(l => l.mode === "pinned").length;
+      const intentLine = { sleep: "Shh… a sleepy state. I keep things dim and cosy here~", nightlight: "Night-time wander! Just a little glow so you don't trip, nya.",
+        wake: "Good morning! This is when the day starts. Nothing beats wake-up~", evening: "Evening vibes. Warm light, soft and comfy.",
+        day: "Daytime! I let the sun do most of the work.", away: "Nobody's home… I'll keep the lights off and wait for you." }[st.intent] || "Hmm, a curious state.";
+      luxieSays(`${intentLine} <span class="tui-dim">State ${st.id} covers ${Math.round(st.share * 100)}% of the time${pinned ? `, and you've pinned ${pinned} bulb${pinned > 1 ? "s" : ""} here` : ""}.${SW.marked.size ? ` ${SW.marked.size} marked for merging (press m).` : ""}</span>`);
+    }
+
+    function swSelect(i) { SW.sel = i; renderSwList(); loadSwDetail(); }
+
+    async function swPost(url, body) {
+      const res = await fetch(url, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {}) });
+      const out = await res.json();
+      if (!res.ok) { luxieSays(`Mrrp! ${esc(out.detail || "That didn't work.")}`); return null; }
+      return out;
+    }
+    async function swLink(role, mode) {
+      const st = SW.states[SW.sel];
+      const cur = st.links?.[role];
+      let brightness = null, kelvin = null;
+      if (mode === "pinned") {
+        const v = prompt(`Pin ${role} in state ${st.id} to what brightness %? (optionally "40 2700" for kelvin)`, cur?.brightness ?? Math.round(st.lights?.[role]?.median_when_on || 50));
+        if (v === null) return;
+        [brightness, kelvin] = v.trim().split(/\s+/).map(Number);
+      }
+      if (await swPost(`./api/luxie/${ROOM}/states/${st.id}/link`, { role, mode, brightness, kelvin: kelvin || null })) loadSwitch();
+    }
+    async function swLock(role) {
+      const st = SW.states[SW.sel];
+      const cur = st.links?.[role] || { mode: "learned" };
+      if (await swPost(`./api/luxie/${ROOM}/states/${st.id}/link`, { role, mode: cur.mode, brightness: cur.brightness, kelvin: cur.kelvin, locked: !cur.locked })) loadSwitch();
+    }
+    async function swMerge() {
+      const ids = [...SW.marked];
+      if (ids.length < 2) { luxieSays("Mark at least two states with <b>space</b>, then press <b>m</b> to merge them, nya~"); return; }
+      luxieSays("Merging… *purrs while thinking*");
+      if (await swPost(`./api/luxie/${ROOM}/states/merge`, { ids })) { SW.marked.clear(); loadSwitch(false); }
+    }
+    async function swUnmerge() {
+      const st = SW.states[SW.sel];
+      if (st.merged_from < 2) { luxieSays("That one isn't merged, so there's nothing to split~"); return; }
+      if (await swPost(`./api/luxie/${ROOM}/states/${st.id}/unmerge`)) loadSwitch(false);
+    }
+    async function swName() {
+      const st = SW.states[SW.sel];
+      const v = prompt(`Name state ${st.id} (${st.description})`, st.name || "");
+      if (v === null) return;
+      await swPost(`./api/datalab/${ROOM}/states/${st.id}/name`, { name: v });
+      loadSwitch();
+    }
+
+    document.getElementById("tui").addEventListener("keydown", (ev) => {
+      if (ev.target.tagName === "INPUT") return;
+      const k = ev.key;
+      const n = SW.states.length;
+      if (!n) return;
+      if (k === "ArrowDown" || k === "j") { SW.sel = (SW.sel + 1) % n; renderSwList(); loadSwDetail(); }
+      else if (k === "ArrowUp" || k === "k") { SW.sel = (SW.sel - 1 + n) % n; renderSwList(); loadSwDetail(); }
+      else if (k === " ") { const id = SW.states[SW.sel].id; SW.marked.has(id) ? SW.marked.delete(id) : SW.marked.add(id); renderSwList(); renderSwDetail(); }
+      else if (k === "m") swMerge();
+      else if (k === "u") swUnmerge();
+      else if (k === "n") swName();
+      else if (/^[1-9]$/.test(k) && +k <= SW.roles.length) { SW.role = +k - 1; renderSwDetail(); }
+      else if ("lpoi".includes(k) && k.length === 1) swLink(SW.roles[SW.role], { l: "learned", p: "pinned", o: "off", i: "ignore" }[k]);
+      else if (k === "x") swLock(SW.roles[SW.role]);
+      else return;
+      ev.preventDefault();
+    });
 
     initRooms().then(loadOverview);
   </script>

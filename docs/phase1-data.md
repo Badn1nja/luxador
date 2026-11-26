@@ -139,3 +139,27 @@ so it works from day one and in either hemisphere. Optional **seasonal compensat
 
 Your own behaviour accumulates in the `seasonal` table alongside it, so the compensation can later be checked
 against (and learned from) what you actually did.
+
+## Luxie · the switchboard
+
+The **🐱 Luxie** tab is a keyboard-first, terminal-style page over the discovered states:
+
+| Key | Does |
+|---|---|
+| `↑↓` / `j k` | select a state (its dataset shows on the right: hour, weekday, sun, indoor lux, recent days) |
+| `space`, then `m` | mark states, then merge them; `u` splits a merged state again |
+| `n` | name the state |
+| `1-9` | pick a bulb (light group) |
+| `l` `p` `o` `i` | set that bulb's mode in this state: **learned** (default), **pinned** (fixed % and optional K), **off**, **ignore** (hands off) |
+| `x` | lock / unlock that bulb's setting |
+
+Names, merges and bulb links are keyed to the states' centres in context space (not their numbers), so they
+survive every rebuild and retrain. Links are stored now and used by the resolver in Phase 3.
+
+## Locks: tunable, not a black box
+
+* **Seasonal lift** is tunable live in the Data Lab's year card (sliders, saved in the database, over
+  `settings.yaml`), with the arithmetic for today shown underneath.
+* Every lift setting and every bulb link has a 🔒. A locked value can't be changed (not by a slider, a reset,
+  or any future auto-tuning by Luxie) until it is unlocked. Future inference only proposes changes to
+  unlocked values and says why.

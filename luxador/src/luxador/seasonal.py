@@ -75,6 +75,37 @@ class SeasonalConfig:
         return cls(**known, extra=raw)
 
 
+# What can be tuned live, with safe bounds (the UI sliders use the same ranges)
+LIMITS: dict[str, tuple[float, float]] = {
+    "winter_boost_max_pct": (0, 40),
+    "winter_kelvin_shift": (0, 1500),
+    "summer_shift_factor": (0, 1),
+    "summer_later_max_min": (0, 120),
+    "winter_earlier_max_min": (0, 120),
+}
+
+
+def clean_overrides(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate a live tuning request: known keys only, numbers clamped, HH:MM window."""
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if k == "enabled":
+            out[k] = bool(v)
+        elif k in LIMITS:
+            lo, hi = LIMITS[k]
+            out[k] = max(lo, min(hi, float(v)))
+            if k == "winter_kelvin_shift":
+                out[k] = int(out[k])
+        elif k in ("day_start", "day_end"):
+            _hm(str(v))  # raises on bad input
+            out[k] = str(v)
+        else:
+            raise ValueError(f"unknown seasonal setting {k!r}")
+    if "day_start" in out and "day_end" in out and _hm(out["day_start"]) >= _hm(out["day_end"]):
+        raise ValueError("day_start must be before day_end")
+    return out
+
+
 def _hm(v: str) -> int:
     h, m = v.split(":")
     return int(h) * 60 + int(m)
@@ -122,7 +153,15 @@ def compensation_for_day(day: dict[str, Any], table: dict[str, Any], cfg: Season
     if day["sunset_min"] is not None and table["ref_sunset_min"] is not None:
         diff = (day["sunset_min"] - table["ref_sunset_min"]) * cfg.summer_shift_factor
         shift = min(cfg.summer_later_max_min, diff) if diff > 0 else max(-cfg.winter_earlier_max_min, diff)
+    sunset_diff = (day["sunset_min"] - table["ref_sunset_min"]) if day["sunset_min"] is not None and table["ref_sunset_min"] is not None else None
     return {
+        "math": {
+            "day_hours": day["day_hours"], "equinox_hours": 12.0, "shortest_hours": round(table["min_day_hours"], 2),
+            "deficit_formula": "(12 h − today) ÷ (12 h − shortest day)",
+            "sunset_vs_equinox_min": sunset_diff, "summer_shift_factor": cfg.summer_shift_factor,
+            "boost_formula": f"{cfg.winter_boost_max_pct:g}% × deficit",
+            "shift_formula": f"sunset difference × {cfg.summer_shift_factor:g}, capped +{cfg.summer_later_max_min:g} / −{cfg.winter_earlier_max_min:g} min",
+        },
         "deficit": round(deficit, 2),
         "boost_pct": round(cfg.winter_boost_max_pct * deficit, 1),
         "kelvin_shift": int(round(cfg.winter_kelvin_shift * deficit)),

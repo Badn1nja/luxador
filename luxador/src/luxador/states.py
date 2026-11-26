@@ -187,8 +187,19 @@ def light_behaviour(members: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def keys_match(a: list[list[float]], b: list[list[float]]) -> bool:
+    """Two states are 'the same' if any of their member centres are close. Survives renumbering + merges."""
+    return any(len(x) == len(y) and math.sqrt(_d2(x, y)) < NAME_MATCH_DISTANCE for x in a for y in b)
+
+
+def _entry_keys(entry: dict[str, Any]) -> list[list[float]]:
+    return entry.get("keys") or ([entry["centroid"]] if entry.get("centroid") else [])
+
+
 def discover_states(slots: list[dict[str, Any]], max_states: int = 28,
-                    named: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                    named: list[dict[str, Any]] | None = None,
+                    merges: list[list[list[float]]] | None = None,
+                    links: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Cluster contexts into states. Writes slot['state'] and returns the state model."""
     usable = [s for s in slots if s.get("occupied") is not None or s.get("light_max") is not None]
     if len(usable) < 288:  # less than a day of data: nothing worth discovering yet
@@ -219,6 +230,32 @@ def discover_states(slots: list[dict[str, Any]], max_states: int = 28,
         return {"states": [], "k": 0, "reason": "data too uniform to split"}
     k, score, cents, assign = max((c for c in candidates if c[1] >= 0.9 * best_score), key=lambda c: c[0])
 
+    # Your merges: clusters whose centre matches any centre in a merge group become one state
+    parent = list(range(len(cents)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for group in merges or []:
+        hit = [c for c in range(len(cents)) if keys_match([cents[c]], group)]
+        for c in hit[1:]:
+            parent[find(c)] = find(hit[0])
+    member_keys: dict[int, list[list[float]]] = defaultdict(list)
+    for c in range(len(cents)):
+        member_keys[find(c)].append([round(v, 4) for v in cents[c]])
+    assign = [find(a) for a in assign]
+    wsum: dict[int, float] = defaultdict(float)
+    acc: dict[int, list[float]] = {}
+    for pnt, wt, a in zip(pts, w, assign):
+        wsum[a] += wt
+        acc.setdefault(a, [0.0] * len(pnt))
+        for j, v in enumerate(pnt):
+            acc[a][j] += wt * v
+    cents = {a: [v / wsum[a] for v in acc[a]] for a in acc}
+
     key_state = {key: a for key, a in zip(uniq, assign)}
     members: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for s in slots:
@@ -244,11 +281,12 @@ def discover_states(slots: list[dict[str, Any]], max_states: int = 28,
         intents = Counter(s.get("intent") for s in mem if s.get("intent"))
         top_intent, top_n = intents.most_common(1)[0] if intents else (None, 0)
         cent = cents[old]
-        name = None
-        for nm in named or []:
-            if len(nm.get("centroid", [])) == len(cent) and math.sqrt(_d2(nm["centroid"], cent)) < NAME_MATCH_DISTANCE:
-                name = nm["name"]
-                break
+        keys = member_keys[old]
+        name = next((nm["name"] for nm in named or [] if keys_match(keys, _entry_keys(nm))), None)
+        state_links = {}
+        for ln in links or []:
+            if keys_match(keys, _entry_keys(ln)):
+                state_links[ln["role"]] = {k: ln.get(k) for k in ("mode", "brightness", "kelvin", "locked")}
         states.append({
             "id": remap[old],
             "name": name,
@@ -260,6 +298,9 @@ def discover_states(slots: list[dict[str, Any]], max_states: int = 28,
             "hours": [sum(1 for s in mem if s["minute_of_day"] // 60 == h) for h in range(24)],
             "lights": light_behaviour(mem),
             "centroid": [round(v, 4) for v in cent],
+            "keys": keys,
+            "merged_from": len(keys),
+            "links": state_links,
         })
     return {"k": k, "silhouette": round(score, 3), "zones": zones, "states": states,
             "tried": [{"k": c[0], "silhouette": round(c[1], 3)} for c in candidates]}

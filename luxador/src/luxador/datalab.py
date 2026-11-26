@@ -764,8 +764,9 @@ class DataLab:
         slots = build_slots(ents, hist, start, end, self.tz())
         label_slots(slots, self.store.get_intent_labels(room))
         add_since_active(slots)
-        named = self.state_names(room)
-        state_model = discover_states(slots, int(self.settings.get("max_states", 28) or 28), named=named)
+        state_model = discover_states(slots, int(self.settings.get("max_states", 28) or 28),
+                                      named=self.state_names(room), merges=self._get(room, "state_merges"),
+                                      links=self._get(room, "state_links"))
         self.store.replace_slots(room, slots)
         model = IntentModel().fit(slots)
         self.store.save_model(room, "intent_nb", model.to_json())
@@ -779,24 +780,135 @@ class DataLab:
         m = self.store.load_model(room, "states")
         return json.loads(m[1]) if m else {"states": [], "k": 0}
 
-    def state_names(self, room: str) -> list[dict[str, Any]]:
-        m = self.store.load_model(room, "state_names")
+    def _get(self, room: str, kind: str) -> list:
+        m = self.store.load_model(room, kind)
         return json.loads(m[1]) if m else []
 
+    def _put(self, room: str, kind: str, data: list) -> None:
+        self.store.save_model(room, kind, json.dumps(data))
+
+    def state_names(self, room: str) -> list[dict[str, Any]]:
+        return self._get(room, "state_names")
+
+    def _state(self, room: str, state_id: int) -> dict[str, Any]:
+        st = next((x for x in self.states(room).get("states", []) if x["id"] == state_id), None)
+        if st is None:
+            raise KeyError(state_id)
+        return st
+
     def name_state(self, room: str, state_id: int, name: str | None) -> dict[str, Any]:
-        """Names stick to a state's centroid, so they survive rebuilds that renumber states."""
+        """Names stick to a state's member centres, so they survive rebuilds that renumber states."""
+        from .states import keys_match, _entry_keys
+
         model = self.states(room)
         st = next((x for x in model.get("states", []) if x["id"] == state_id), None)
         if st is None:
             raise KeyError(state_id)
-        names = [n for n in self.state_names(room) if n.get("centroid") != st["centroid"]]
+        keys = st.get("keys") or [st["centroid"]]
+        names = [n for n in self.state_names(room) if not keys_match(keys, _entry_keys(n))]
         clean = (name or "").strip()
         if clean:
-            names.append({"centroid": st["centroid"], "name": clean})
-        self.store.save_model(room, "state_names", json.dumps(names))
+            names.append({"keys": keys, "name": clean})
+        self._put(room, "state_names", names)
         st["name"] = clean or None
         self.store.save_model(room, "states", json.dumps(model))
         return st
+
+    # ---- switchboard: merge / unmerge / link
+    def merge_states(self, room: str, ids: list[int]) -> dict[str, Any]:
+        from .states import keys_match
+
+        if len(set(ids)) < 2:
+            raise ValueError("pick at least two states to merge")
+        keys = [k for i in ids for k in (self._state(room, i).get("keys") or [self._state(room, i)["centroid"]])]
+        groups = [g for g in self._get(room, "state_merges") if not keys_match(g, keys)]
+        groups.append(keys)  # absorbs any earlier group these states were part of
+        self._put(room, "state_merges", groups)
+        self.rebuild(room)
+        return self.states(room)
+
+    def unmerge_state(self, room: str, state_id: int) -> dict[str, Any]:
+        from .states import keys_match
+
+        keys = self._state(room, state_id).get("keys") or []
+        self._put(room, "state_merges", [g for g in self._get(room, "state_merges") if not keys_match(g, keys)])
+        self.rebuild(room)
+        return self.states(room)
+
+    def link_state(self, room: str, state_id: int, role: str, mode: str,
+                   brightness: float | None = None, kelvin: int | None = None,
+                   locked: bool | None = None) -> dict[str, Any]:
+        """How a bulb behaves in a state: learned (default), pinned (fixed level), off, or ignore (hands off).
+
+        A locked link can't be changed (by you or any future auto-learning) until it is unlocked:
+        send the same mode with locked=False first.
+        """
+        from .states import keys_match, _entry_keys
+
+        st0 = self._state(room, state_id)
+        existing = next((ln for ln in self._get(room, "state_links")
+                         if ln["role"] == role and keys_match(st0.get("keys") or [st0["centroid"]], _entry_keys(ln))), None)
+        if existing and existing.get("locked") and locked is not False:
+            raise PermissionError(f"{role} is locked in this state (unlock first)")
+        is_locked = bool(locked) if locked is not None else bool(existing and existing.get("locked"))
+
+        if mode not in ("learned", "pinned", "off", "ignore"):
+            raise ValueError("mode must be learned, pinned, off or ignore")
+        if role not in self.rooms[room].bulbs:
+            raise ValueError(f"unknown light group {role!r}")
+        if mode == "pinned" and brightness is None:
+            raise ValueError("pinned needs a brightness")
+        st = self._state(room, state_id)
+        keys = st.get("keys") or [st["centroid"]]
+        links = [ln for ln in self._get(room, "state_links")
+                 if not (ln["role"] == role and keys_match(keys, _entry_keys(ln)))]
+        if mode != "learned" or is_locked:  # plain learned is the default, so it needs no row
+            links.append({"keys": keys, "role": role, "mode": mode,
+                          "brightness": max(0.0, min(100.0, float(brightness))) if brightness is not None else None,
+                          "kelvin": int(kelvin) if kelvin else None, "locked": is_locked})
+        self._put(room, "state_links", links)
+        model = self.states(room)
+        for x in model.get("states", []):
+            if x["id"] == state_id:
+                x.setdefault("links", {})
+                if mode == "learned" and not is_locked:
+                    x["links"].pop(role, None)
+                else:
+                    x["links"][role] = {"mode": mode, "brightness": links[-1]["brightness"],
+                                        "kelvin": links[-1]["kelvin"], "locked": is_locked}
+        self.store.save_model(room, "states", json.dumps(model))
+        return self._state(room, state_id)
+
+    def state_dataset(self, room: str, state_id: int) -> dict[str, Any]:
+        """Everything about one state: when (hour, weekday, dates), daylight (sun, lux) and what each bulb did."""
+        st = self._state(room, state_id)
+        mem = [s for s in self.store.load_slots(room) if s.get("state") == state_id]
+        hours = [0] * 24
+        weekdays = [0] * 7
+        sun: Counter = Counter()
+        lux_by_hour: list[list[float]] = [[] for _ in range(24)]
+        dates: Counter = Counter()
+        for s in mem:
+            h = s["minute_of_day"] // 60
+            hours[h] += 1
+            weekdays[s["weekday"]] += 1
+            e = s.get("sun_elev")
+            sun["night" if e is None or e < -6 else "twilight" if e < 0 else "low" if e < 15 else "high"] += 1
+            if s.get("lux_in") is not None:
+                lux_by_hour[h].append(s["lux_in"])
+            dates[s["slot"][:10]] += 1
+        recent = sorted(dates)[-21:]
+        n = len(mem) or 1
+        return {
+            "state": st,
+            "slots": len(mem),
+            "hours": hours,
+            "weekdays": weekdays,
+            "sun": {k: round(v / n, 2) for k, v in sun.items()},
+            "lux_in_by_hour": [round(median(v), 1) if v else None for v in lux_by_hour],
+            "recent_days": [{"date": d, "minutes": dates[d] * SLOT_MINUTES} for d in recent],
+            "roles": list(self.rooms[room].bulbs),
+        }
 
     def model(self, room: str) -> IntentModel | None:
         m = self.store.load_model(room, "intent_nb")

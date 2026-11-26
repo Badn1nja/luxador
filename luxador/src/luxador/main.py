@@ -20,7 +20,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .datalab import DEFAULT_INTENT_POLICY, RANGES, DataLab
-from .seasonal import SeasonalConfig, SeasonalModel
+from .seasonal import LIMITS as SEASONAL_LIMITS
+from .seasonal import SeasonalConfig, SeasonalModel, clean_overrides
 from .datalab import add_since_active as d_add_since_active
 from .datalab import series as d_series
 from .ha_bridge import HABridge
@@ -236,7 +237,19 @@ class EngineRuntime:
         tz_name = self.settings.get("time_zone") or self.bridge.time_zone or "UTC"
         return SeasonalModel(float(lat) if lat not in (None, "") else None,
                              float(lon) if lon not in (None, "") else None,
-                             tz_name, SeasonalConfig.from_settings(self.settings.get("seasonal")))
+                             tz_name, SeasonalConfig.from_settings(self.seasonal_settings()))
+
+    def seasonal_overrides(self) -> dict[str, Any]:
+        m = self.luxie.load_model("_house", "seasonal_overrides")
+        return json.loads(m[1]) if m else {}
+
+    def seasonal_locks(self) -> list[str]:
+        m = self.luxie.load_model("_house", "seasonal_locks")
+        return json.loads(m[1]) if m else []
+
+    def seasonal_settings(self) -> dict[str, Any]:
+        """settings.yaml, with anything tuned live in the UI layered on top."""
+        return {**(self.settings.get("seasonal") or {}), **self.seasonal_overrides()}
 
     def seasonal_now(self, now: datetime) -> dict[str, Any]:
         model = self.seasonal_model()
@@ -692,6 +705,24 @@ class StateNameRequest(BaseModel):
     name: str | None = None
 
 
+class SeasonalTuneRequest(BaseModel):
+    values: dict[str, Any] = {}
+    reset: bool = False
+    locks: dict[str, bool] = {}
+
+
+class MergeRequest(BaseModel):
+    ids: list[int]
+
+
+class LinkRequest(BaseModel):
+    role: str
+    mode: str
+    brightness: float | None = None
+    kelvin: int | None = None
+    locked: bool | None = None
+
+
 class OffsetActionRequest(BaseModel):
     role: str
     bucket_key: str
@@ -1017,8 +1048,110 @@ async def datalab_year(year: int | None = None) -> dict[str, Any]:
     now = datetime.now(runtime.datalab.tz())
     out = model.year_view(year or now.year)
     out["now"] = model.now(now)
+    out["locks"] = runtime.seasonal_locks()
+    out["limits"] = SEASONAL_LIMITS
     out["location_source"] = "settings" if runtime.settings.get("latitude") not in (None, "") else (
         "home_assistant" if runtime.bridge.latitude is not None else None)
+    return out
+
+
+def _room_or_404(room_name: str) -> None:
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+
+
+@app.get("/api/luxie/{room_name}/states")
+async def switchboard_states(room_name: str) -> dict[str, Any]:
+    """Luxie switchboard: every discovered state with its links."""
+    _room_or_404(room_name)
+    out = runtime.datalab.states(room_name)
+    out["roles"] = list(runtime.rooms[room_name].bulbs)
+    out["live"] = runtime.live_intent(room_name).get("state")
+    return out
+
+
+@app.get("/api/luxie/{room_name}/states/{state_id}")
+async def switchboard_state(room_name: str, state_id: int) -> dict[str, Any]:
+    _room_or_404(room_name)
+    try:
+        return runtime.datalab.state_dataset(room_name, state_id)
+    except KeyError:
+        raise HTTPException(404, f"Unknown state {state_id}")
+
+
+@app.post("/api/luxie/{room_name}/states/merge")
+async def switchboard_merge(room_name: str, req: MergeRequest) -> dict[str, Any]:
+    _room_or_404(room_name)
+    try:
+        return runtime.datalab.merge_states(room_name, req.ids)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/luxie/{room_name}/states/{state_id}/unmerge")
+async def switchboard_unmerge(room_name: str, state_id: int) -> dict[str, Any]:
+    _room_or_404(room_name)
+    try:
+        return runtime.datalab.unmerge_state(room_name, state_id)
+    except KeyError:
+        raise HTTPException(404, f"Unknown state {state_id}")
+
+
+@app.post("/api/luxie/{room_name}/states/{state_id}/link")
+async def switchboard_link(room_name: str, state_id: int, req: LinkRequest) -> dict[str, Any]:
+    _room_or_404(room_name)
+    try:
+        return runtime.datalab.link_state(room_name, state_id, req.role, req.mode, req.brightness, req.kelvin,
+                                          locked=req.locked)
+    except KeyError:
+        raise HTTPException(404, f"Unknown state {state_id}")
+    except PermissionError as exc:
+        raise HTTPException(423, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/house/seasonal")
+async def seasonal_get() -> dict[str, Any]:
+    assert runtime is not None
+    return {"effective": SeasonalConfig.from_settings(runtime.seasonal_settings()).__dict__ | {"extra": None},
+            "from_settings_yaml": runtime.settings.get("seasonal") or {},
+            "overrides": runtime.seasonal_overrides(), "limits": SEASONAL_LIMITS,
+            "locks": runtime.seasonal_locks()}
+
+
+@app.post("/api/house/seasonal")
+async def seasonal_tune(req: SeasonalTuneRequest) -> dict[str, Any]:
+    """Tune the seasonal lift live. Saved in the database (overrides settings.yaml).
+
+    Locked settings can't be changed (by you, a reset, or any future auto-tune) until unlocked: send
+    {"locks": {"key": false}} first. A reset keeps locked values.
+    """
+    assert runtime is not None
+    prior_locks = set(runtime.seasonal_locks())
+    locks = set(prior_locks)
+    for k, on in req.locks.items():
+        if k not in SEASONAL_LIMITS and k not in ("enabled", "day_start", "day_end"):
+            raise HTTPException(400, f"unknown seasonal setting {k!r}")
+        (locks.add if on else locks.discard)(k)
+    current = runtime.seasonal_overrides()
+    if req.reset:
+        effective = SeasonalConfig.from_settings(runtime.seasonal_settings()).__dict__
+        merged: dict[str, Any] = {k: effective[k] for k in locks}  # locked values survive a reset
+    else:
+        # "set it and lock it" in one request is fine; only locks that already existed (and stay) block edits
+        blocked = sorted(k for k in req.values if k in prior_locks and k in locks)
+        if blocked:
+            raise HTTPException(423, f"locked: {', '.join(blocked)} (unlock first)")
+        try:
+            merged = {**current, **clean_overrides(req.values)}
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc))
+    runtime.luxie.save_model("_house", "seasonal_overrides", json.dumps(merged))
+    runtime.luxie.save_model("_house", "seasonal_locks", json.dumps(sorted(locks)))
+    out = await datalab_year()
+    out["locks"] = sorted(locks)
     return out
 
 
