@@ -94,27 +94,6 @@ def test_opnsense_unavailable_is_reported_not_faked():
     assert not lap.available and not lap.active
 
 
-def test_patterns_propose_label_and_approx_match(tmp_path):
-    store = LuxieStore(tmp_path / "t.db")
-    base = datetime(2026, 11, 20, 13, 0)
-    for d in range(4):
-        s = base + timedelta(days=d)
-        store.record_episode("test", "desk+desk.laptop", s, s + timedelta(minutes=90))
-    store.record_episode("test", "sofa", base, base + timedelta(seconds=30))  # blip, ignored
-
-    pats = store.pattern_summary("test")
-    assert [p["signature"] for p in pats] == ["desk+desk.laptop"]
-    assert pats[0]["propose"] and pats[0]["count"] == 4 and 13 in pats[0]["typical_hours"]
-
-    store.set_pattern_label("test", "desk+desk.laptop", "Working")
-    assert store.resolve_state("test", "desk+desk.laptop") == ("working", "exact")
-    # Same pattern plus the TV quietly on: still close enough to 'working'
-    assert store.resolve_state("test", "desk+desk.laptop+sofa.tv") == ("working", "approx")
-    assert store.resolve_state("test", "sofa+sofa.tv") == (None, None)
-    assert store.resolve_state("test", "") == ("empty", "exact")
-    assert not store.pattern_summary("test")[0]["propose"]
-
-
 def test_parse_opnsense_payloads():
     hosts = parse_arp({"rows": [
         {"mac": "AA:BB:CC:00:11:22", "ip": "10.0.0.5", "hostname": "kwn-laptop.lan", "expired": False},
@@ -142,14 +121,3 @@ def test_controller_conflicts_are_classified_and_flagged(tmp_path):
     lights = {l["entity_id"]: l for l in store.contested_lights("test")}
     assert lights["light.lamp"]["fighting"] is True
     assert lights["light.other"]["fighting"] is False
-
-
-def test_weekly_profile_from_actual_light_samples(tmp_path):
-    store = LuxieStore(tmp_path / "t.db")
-    now = datetime.now()
-    for bri in (40, 50, 60):
-        store.record_light_sample("test", "lamp", "sofa+sofa.tv", "tv", True, bri, 2700, None, 30, 5.0, False,
-                                  ts=now.replace(hour=21))
-    prof = store.weekly_light_profile("test")
-    cell = prof["profile"]["tv"]["lamp"][0]
-    assert cell["hour"] == 21 and cell["median_bri"] == 50 and cell["median_kelvin"] == 2700

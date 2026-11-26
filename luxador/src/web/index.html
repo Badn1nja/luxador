@@ -249,44 +249,30 @@
   </header>
 
   <nav class="top-nav">
-    <button id="nav-overview" class="active" onclick="showMainView('overview')">🏠 Main Overview</button>
-    <button id="nav-room" onclick="showMainView('room')">🛋️ Room</button>
+    <button id="nav-overview" class="active" onclick="showMainView('overview')">🏠 Home</button>
     <label class="inline" style="margin-left:auto;color:var(--muted);">Room
       <select id="roomPicker" onchange="selectRoom(this.value)"></select>
     </label>
     <button id="nav-switch" onclick="showMainView('switch')">🐱 Luxie</button>
+    <button id="nav-datalab" onclick="showMainView('datalab')">📊 Data</button>
     <button id="nav-luxie" onclick="showMainView('luxie')">📜 Logs</button>
-    <button id="nav-datalab" onclick="showMainView('datalab')">🔬 Data Lab</button>
   </nav>
 
   <main>
-    <div id="confirmBanner" class="prompt-banner">
-      <div><strong>🤖 Luxie Confirmation:</strong> <span id="confirmText"></span></div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn primary" onclick="sendConfirm('Sleeping')">Yes, Sleep</button>
-        <button class="btn" onclick="sendConfirm('Relaxing')">Still Relaxing</button>
-        <button class="btn" onclick="sendConfirm('Working')">Working Late</button>
-      </div>
-    </div>
 
-    <div id="warnBanner" class="prompt-banner" style="border-color:var(--red);background:rgba(248,81,73,0.08);"></div>
 
     <!-- MAIN OVERVIEW -->
     <section id="view-overview" class="view active">
       <div class="card" style="margin-bottom:14px;">
         <div class="row">
           <div>
-            <h2 style="margin-bottom:4px;">🏠 House Context</h2>
+            <h2 style="margin-bottom:4px;">🏠 Connection</h2>
             <div class="muted" id="houseSummary">Loading...</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;" id="houseBadges"></div>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:14px;">
-        <h2>🧭 Build Phases</h2>
-        <div class="grid" id="phaseCards" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));"></div>
-      </div>
 
       <div class="grid" id="overviewRooms"></div>
 
@@ -295,228 +281,14 @@
         <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Luxador is set up for. Add a room by dropping a <code>rooms/&lt;name&gt;.yaml</code> into the app's config folder; this shows what to put in it.</div>
         <div id="houseAreas" class="muted">Loading…</div>
       </div>
-    </section>
 
-    <!-- ROOM WORKSPACE: PRESENCE | TARGETS | TIME | TWEAKS -->
-    <section id="view-room" class="view">
-      <div class="room-subnav">
-        <div class="tabs">
-          <button id="sub-presence" class="active" onclick="showRoomTab('presence')">📡 Presence</button>
-          <button id="sub-targets" onclick="showRoomTab('targets')">🎯 Targets (Lux &amp; Colour)</button>
-          <button id="sub-time" onclick="showRoomTab('time')">⏱️ Time &amp; Curves</button>
-          <button id="sub-tweaks" onclick="showRoomTab('tweaks')">🎛️ Tweaks &amp; Guards</button>
-        </div>
-        <div class="muted" id="roomClockInfo"></div>
-      </div>
-
-      <!-- SUB-TAB 1: PRESENCE -->
-      <div id="subview-presence" class="subview active">
-        <div class="grid" style="margin-bottom:14px;">
-          <div class="card">
-            <div class="row"><h2>Room › Presence › Zones (live)</h2><span id="recordingPill" class="pill"></span></div>
-            <div id="presenceTree"></div>
-          </div>
-          <div class="card">
-            <div class="row"><h2>Learned Patterns</h2><span class="pill info">Phase 2</span></div>
-            <div class="muted" style="margin-bottom:8px;">Every combination of zones + signals that actually happens. Name a recurring one once and it becomes a state rules can use: <code>state(working)</code> or <code>when: "state == working"</code>. Blips under 2 min are ignored.</div>
-            <table id="patternsTable"><thead><tr><th>Pattern</th><th>Seen</th><th>Usually</th><th>Name</th></tr></thead><tbody></tbody></table>
-          </div>
-        </div>
-        <div class="grid" style="margin-bottom:14px;">
-          <div class="card">
-            <div class="row"><h2>Devices That Move With Zones</h2><span id="netPill" class="pill"></span></div>
-            <div class="muted" style="margin-bottom:8px;">Learned, not configured. Luxie lines up each device's traffic (OPNsense) against zone presence minute by minute.
-              <strong>zone</strong> = busy when that zone is occupied (a sign of life there) •
-              <strong>room</strong> = follows a person around (phone) • <strong>background</strong> = busy whether anyone's home or not (NAS, cameras, updates): ignored, so it can't pollute learning.</div>
-            <div id="devSummary" class="muted" style="margin-bottom:6px;"></div>
-            <table id="netTable"><thead><tr><th>Device</th><th>Kind</th><th>Evidence</th><th></th></tr></thead><tbody></tbody></table>
-          </div>
-        </div>
-        <div class="grid" style="margin-bottom:14px;">
-          <div class="card">
-            <h2>Sandbox Inputs <span class="pill warn">test values, not recorded</span></h2>
-            <div class="controls" style="margin-bottom:12px;">
-              <label>Room Occupied
-                <select id="inOccupied" onchange="pushInputs()">
-                  <option value="true">Occupied (ON)</option>
-                  <option value="false">Clear (OFF)</option>
-                </select>
-              </label>
-              <span id="zoneInputs" class="controls"></span>
-              <label>TV / Media Player
-                <select id="inMedia" onchange="pushInputs()">
-                  <option value="off">Off / Idle</option>
-                  <option value="playing">Playing</option>
-                </select>
-              </label>
-            </div>
-            <div id="presenceSensorsList" class="breakdown"></div>
-          </div>
-
-          <div class="card">
-            <h2>Rolling Memory &amp; Sleep Guards (Hints)</h2>
-            <div style="margin-bottom:10px;">
-              <div class="row"><span>Presence Prior Window (hold "business as usual")</span><strong id="memWindowLabel">20 min</strong></div>
-              <div class="bar"><div class="bar-fill cool" style="width:85%"></div></div>
-              <div class="muted">Prevents momentary sensor dropouts or quick kitchen trips from killing lights or triggering sleep.</div>
-            </div>
-            <div style="margin-top:12px;">
-              <div class="row"><span>Idle Time (since last motion)</span><input id="inIdle" type="number" min="0" max="120" value="0" style="width:76px" onchange="pushInputs()" /></div>
-              <div class="row" style="margin-top:8px;"><span>Manual Bedtime Flag</span>
-                <select id="inBedtime" onchange="pushInputs()"><option value="false">Off</option><option value="true">On</option></select>
-              </div>
-              <div id="confidenceBreakdown" class="breakdown" style="margin-top:10px;"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SUB-TAB 2: TARGETS (LUX & COLOUR) -->
-      <div id="subview-targets" class="subview">
-        <div class="grid" style="margin-bottom:14px;">
-          <div class="card">
-            <h2>🎯 Ambient Lux vs Target Lux</h2>
-            <div class="row" style="margin-bottom:6px;">
-              <div>
-                <div class="kpi"><span id="luxVal">439</span> <span class="muted">lux</span></div>
-                <div class="muted" id="luxDriftMsg"></div>
-              </div>
-              <label style="width:210px;">Test Ambient Lux Slider
-                <input id="inLux" type="range" min="0" max="600" value="439" oninput="document.getElementById('luxVal').textContent=this.value" onchange="pushInputs()" />
-              </label>
-            </div>
-            <div class="bar"><div id="luxGaugeBar" class="bar-fill cool" style="width:73%"></div></div>
-            <div class="muted" id="luxSourceNote"></div>
-          </div>
-
-          <div class="card">
-            <h2>🎨 Global Colour Schemas</h2>
-            <div id="schemaSwatches" style="display:flex;flex-direction:column;gap:8px;"></div>
-          </div>
-        </div>
-
-        <h3 style="margin:6px 0 10px;">💡 Dynamic Light Allocation (Traits, Live HA vs Target &amp; Punch Test)</h3>
-        <div class="grid" id="roleCards"></div>
-      </div>
-
-      <!-- SUB-TAB 3: TIME & CURVES -->
-      <div id="subview-time" class="subview">
-        <div class="card" style="margin-bottom:14px;">
-          <div class="row">
-            <h2>⏱️ Active Time &amp; Curve Rules (Add / Remove Live)</h2>
-            <label style="flex-direction:row;align-items:center;gap:8px;">Test Clock (HH:MM):
-              <input id="inTime" type="text" placeholder="now" style="width:78px" onchange="refreshRoom()" />
-            </label>
-          </div>
-          <table id="rulesTable" style="margin-top:8px;">
-            <thead><tr><th>Role / Trait</th><th>Window / Hint</th><th>Target / Ramp</th><th>Colour Schema</th><th></th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <div class="controls" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
-            <label>Role
-              <select id="newRuleRole" data-roles="1"></select>
-            </label>
-            <label>Time / Zone <input id="newRuleCond" type="text" value="18:00-22:00" style="width:125px" /></label>
-            <label>Brightness / Target Lux <input id="newRuleBri" type="text" value="target_lux(140, min=10, max=80)" style="width:210px" /></label>
-            <label>Schema
-              <select id="newRuleSchema">
-                <option value="sun">sun</option>
-                <option value="no_blue">no_blue</option>
-                <option value="tv_vivid">tv_vivid</option>
-                <option value="embers">embers</option>
-                <option value="keep">keep</option>
-              </select>
-            </label>
-            <button class="btn primary" onclick="addRule()">+ Add Curve Rule</button>
-          </div>
-          <div id="ruleMsg" class="muted" style="margin-top:6px;"></div>
-        </div>
-
-        <div class="card">
-          <h2>📈 24-Hour Curve &amp; TV Time-Warp Simulator</h2>
-          <div class="controls" style="margin-bottom:10px;">
-            <label>TV On <input id="simTvOn" type="text" value="19:00" style="width:76px" /></label>
-            <label>TV Off <input id="simTvOff" type="text" value="22:30" style="width:76px" /></label>
-            <label>Lux (blank = solar) <input id="simLux" type="number" placeholder="solar" style="width:100px" /></label>
-            <label>Desk Zone
-              <select id="simDesk"><option value="false">No</option><option value="true">Yes</option></select>
-            </label>
-            <label>Punch Role
-              <select id="simPunchRole" data-roles="1" data-none="1"></select>
-            </label>
-            <label>Punch % <input id="simPunchDelta" type="number" value="35" style="width:76px" /></label>
-            <label>Punch At <input id="simPunchTime" type="text" value="20:15" style="width:76px" /></label>
-            <button class="btn primary" onclick="runSim()">Simulate 24h</button>
-          </div>
-          <canvas id="simCanvas" width="1100" height="270"></canvas>
-          <div id="simLegend" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:0.82rem;"></div>
-        </div>
-      </div>
-
-      <!-- SUB-TAB 4: TWEAKS & GUARDS -->
-      <div id="subview-tweaks" class="subview">
-        <div class="grid" style="margin-bottom:14px;">
-          <div class="card">
-            <h2>🎛️ Behavioral Guardrails &amp; Input Gates</h2>
-            <p class="muted">Hint rules that decide *when* curves are allowed to take over vs stay out of your way.</p>
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              <label class="inline">
-                <input id="twNoPresSleep" type="checkbox" checked />
-                Require clear presence before entering Sleep State ("no presence before sleep")
-              </label>
-              <label class="inline">
-                <input id="twInputWake" type="checkbox" />
-                Avoid auto-turning on Task/Desk lights until remote/input detected
-              </label>
-              <label class="inline">
-                <input id="twHoldManual" type="checkbox" />
-                Hold manual remote override until room clears (disable punching-bag decay)
-              </label>
-              <div class="controls">
-                <label>Presence Prior Window (mins) <input id="twPresMins" type="number" value="20" style="width:95px" /></label>
-                <label>Avoid Auto-On Above Lux <input id="twMaxLux" type="number" value="250" style="width:95px" /></label>
-                <label>Punch Half-Life (mins) <input id="twHalfLife" type="number" value="45" style="width:95px" /></label>
-                <label>Clear Delay (sec) <input id="twClearDelay" type="number" value="180" style="width:95px" /></label>
-              </div>
-              <div>
-                <button class="btn primary" onclick="saveTweaks()">Save tweaks to room YAML</button>
-                <span id="tweaksMsg" class="muted" style="margin-left:10px;"></span>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>📺 Active Overlays (TV &amp; Bedtime)</h2>
-            <div id="overlaysList"></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="row" style="margin-bottom:8px;">
-            <h2>📝 Underlying YAML Studio (<span class="roomFile">room</span>.yaml &amp; schemas.yaml)</h2>
-            <div style="display:flex;gap:8px;">
-              <button class="btn" onclick="loadYamls()">Reload From Disk</button>
-              <button class="btn primary" onclick="saveRoomYaml()">Apply <span class="roomFile">room</span>.yaml</button>
-            </div>
-          </div>
-          <div class="grid">
-            <div>
-              <div class="muted" style="margin-bottom:4px;">config/rooms/<span class="roomFile">room</span>.yaml</div>
-              <textarea id="yamlRoom"></textarea>
-              <div id="yamlRoomMsg" class="muted" style="margin-top:4px;"></div>
-            </div>
-            <div>
-              <div class="row" style="margin-bottom:4px;">
-                <span class="muted">config/schemas.yaml</span>
-                <button class="btn" onclick="saveSchemasYaml()">Apply schemas.yaml</button>
-              </div>
-              <textarea id="yamlSchemas"></textarea>
-              <div id="yamlSchemasMsg" class="muted" style="margin-top:4px;"></div>
-            </div>
-          </div>
-        </div>
+      <div class="card" style="margin-top:14px;">
+        <h2>⚔️ Contested lights (24 h)</h2>
+        <div class="muted" style="margin-bottom:8px;">Changes made by anything other than Luxador. <strong>automation/integration</strong> = another controller (Magic Areas, Adaptive Lighting, an automation) is also driving the light: remove it from that controller. <strong>user</strong> = a person, which is fine.</div>
+        <table id="contestedTable"><thead><tr><th>Light</th><th>By</th><th>Last</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </section>
+
 
     <!-- LUXIE LOGS & DATA -->
     <!-- DATA LAB (Phase 1 · Data): how the system sees the house -->
@@ -537,17 +309,19 @@
 
       <div class="grid" style="margin-bottom:14px;">
         <div class="card">
-          <div class="row"><h2>How Luxie reads right now</h2><span class="pill info">read-only</span></div>
-          <div id="dlLive"></div>
+          <div class="row"><h2>Right now</h2><span id="recordingPill" class="pill"></span></div>
+          <div id="presenceTree" class="muted"></div>
         </div>
         <div class="card">
           <h2>Coverage</h2>
           <div id="dlCoverage" class="muted"></div>
         </div>
-        <div class="card">
-          <h2>Model quality</h2>
-          <div id="dlModel" class="muted"></div>
-        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row"><h2>What goes together</h2><span class="muted" id="tgMeta"></span></div>
+        <div class="muted" style="margin-bottom:8px;">Every signal as yes/no per 5 minutes. <strong>Goes with</strong> = usually true at the same time (× = how much more than at a random moment). <strong>Usually</strong> = hours it's on at least half the time. <strong>Now</strong> = how often it's on at this hour on this kind of day: the simplest honest prediction.</div>
+        <div id="tgTable" style="overflow-x:auto;"></div>
       </div>
 
       <div class="card" style="margin-bottom:14px;">
@@ -555,7 +329,7 @@
           <h2 id="dlTitle">Timeline</h2>
           <div id="dlLegend" class="dl-legend"></div>
         </div>
-        <div class="muted" style="margin-bottom:6px;">Shaded = sun below the horizon. Click the chart twice to pick a time range to label.</div>
+        <div class="muted" style="margin-bottom:6px;">Shaded = sun below the horizon. Hover for exact values.</div>
         <div id="dlPanels" class="dl-panels"></div>
         <details style="margin-top:8px;"><summary class="muted">Table view</summary><div id="dlTable" style="max-height:320px;overflow:auto;"></div></details>
       </div>
@@ -586,29 +360,17 @@
         <div id="dlYearLearned" class="muted" style="margin-top:6px;"></div>
       </div>
 
-      <div class="card" style="margin-bottom:14px;">
-        <div class="row"><h2>Discovered states</h2><span id="dlStatesMeta" class="muted"></span></div>
-        <div class="muted" style="margin-bottom:8px;">Found in your data, not configured: each state is a context (time × day × daylight × presence × activity), and under it what every light actually did, including how its brightness shifts with daylight. Name the ones you recognise; names survive rebuilds.</div>
-        <div style="overflow-x:auto;"><table id="dlStates"><thead><tr><th>#</th><th>State</th><th>Usually</th><th>Share</th><th>Intent</th><th>What the lights did</th></tr></thead><tbody></tbody></table></div>
-      </div>
 
       <div class="grid" style="margin-bottom:14px;">
         <div class="card">
-          <h2>Label what was really happening</h2>
-          <div class="muted" style="margin-bottom:8px;">Your labels beat the rules and count 5× in training. Click the timeline twice to fill start/end.</div>
-          <div class="controls">
-            <label>Start <input id="dlLabStart" type="datetime-local" /></label>
-            <label>End <input id="dlLabEnd" type="datetime-local" /></label>
-            <label>Intent <select id="dlLabIntent"></select></label>
-            <button class="btn primary" onclick="dlAddLabel()">Add label</button>
-          </div>
-          <div id="dlLabMsg" class="muted" style="margin-top:6px;"></div>
-          <table id="dlLabels" style="margin-top:8px;"><thead><tr><th>From</th><th>To</th><th>Intent</th><th></th></tr></thead><tbody></tbody></table>
+          <div class="row"><h2>Network devices (OPNsense)</h2><span id="netPill" class="pill"></span></div>
+          <div class="muted" style="margin-bottom:8px;">Device traffic lined up against zone presence. <strong>zone</strong> = busy when that zone is occupied; <strong>room</strong> = follows a person around; <strong>background</strong> = busy whether anyone's home or not, so it's ignored.</div>
+          <div id="devSummary" class="muted" style="margin-bottom:6px;"></div>
+          <table id="netTable"><thead><tr><th>Device</th><th>Kind</th><th>Evidence</th><th></th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
-          <h2>Intent layering</h2>
-          <div class="muted" style="margin-bottom:6px;">Of the intents that clear their confidence bar, the highest priority wins. Edit <code>intents.yaml</code> to change it.</div>
-          <table id="dlPolicy"><thead><tr><th>Intent</th><th>Priority</th><th>Needs</th></tr></thead><tbody></tbody></table>
+          <h2>💾 Storage</h2>
+          <div id="storageStats" class="muted"></div>
         </div>
       </div>
       <div id="dlTip" class="dl-tip" role="tooltip"></div>
@@ -677,7 +439,7 @@
       </div>
 
       <details class="card" id="swInsights" ontoggle="if (this.open) loadSwitch(false)">
-        <summary>Insights · discovered states <span class="muted" style="font-weight:400">(what Luxie found in your history; pin or merge them here)</span></summary>
+        <summary>Learned patterns <span class="muted" style="font-weight:400">(under the hood: what Luxie found in your history; pin or merge here)</span></summary>
         <div class="tui" id="tui" tabindex="0" aria-label="Luxie switchboard. Keys: up/down select, space mark, m merge, u unmerge, n name, 1-9 pick bulb, l p o i set mode, x lock">
           <div class="tui-body">
           <div class="tui-pane tui-list">
@@ -698,37 +460,8 @@
     </section>
 
     <section id="view-luxie" class="view">
-      <div class="grid" style="margin-bottom:14px;">
-        <div class="card">
-          <div class="row">
-            <h2>Learned Baseline Factors (Bounded EWMA)</h2>
-            <button class="btn" onclick="triggerRollup()">Run Clean Rollup Now</button>
-          </div>
-          <table id="offsetsTable"><thead><tr><th>Role</th><th>Bucket</th><th>Offset</th><th>Overrides</th><th>Actions</th></tr></thead><tbody></tbody></table>
-        </div>
-        <div class="card">
-          <h2>Luxie Telemetry Tiers</h2>
-          <div id="telemetryStats" class="muted"></div>
-        </div>
-        <div class="card">
-          <h2>💾 Storage</h2>
-          <div id="storageStats" class="muted"></div>
-        </div>
-      </div>
-      <div class="grid" style="margin-bottom:14px;">
-        <div class="card">
-          <h2>⚔️ Contested Lights (24h)</h2>
-          <div class="muted" style="margin-bottom:8px;">Changes made by anything other than Luxador. <strong>automation/integration</strong> writes mean another controller (Magic Areas, Adaptive Lighting, an automation) is also driving the light: Luxador won't fight it or learn from it; remove that light from the other controller. <strong>user</strong> = a person, which is fine (that's a punch).</div>
-          <table id="contestedTable"><thead><tr><th>Light</th><th>By</th><th>Last</th><th></th></tr></thead><tbody></tbody></table>
-        </div>
-        <div class="card">
-          <div class="row"><h2>📈 Last Week Says… (preview)</h2><span class="pill info">Phase 3</span></div>
-          <div class="muted" style="margin-bottom:8px;">Median of what the lights <em>actually</em> were over the last 7 days, per state and hour. Read-only: nothing drives bulbs from this yet.</div>
-          <div id="weeklyProfile" class="muted"></div>
-        </div>
-      </div>
       <div class="card">
-        <h2>Causal Audit Log ("Why am I at X%?")</h2>
+        <h2>Audit log: every change and why</h2>
         <table id="causalTable"><thead><tr><th>Time</th><th>Role</th><th>Change</th><th>Actor</th><th>Reason</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
@@ -752,7 +485,6 @@
       const r = ROOMS.find(x => x.room === ROOM);
       if (!r) return;
       document.getElementById("roomPicker").value = ROOM;
-      document.getElementById("nav-room").textContent = `🛋️ Room: ${r.friendly_name}`;
       document.querySelectorAll(".roomFile").forEach(e => e.textContent = ROOM);
       document.querySelectorAll("select[data-roles]").forEach(sel => {
         const keep = sel.value;
@@ -764,15 +496,8 @@
       ROOM = name;
       try { localStorage.setItem("luxador.room", name); } catch (e) {}
       applyRoomChrome();
-      showMainView(CURRENT_VIEW === "overview" ? "room" : CURRENT_VIEW);
+      showMainView(CURRENT_VIEW);
     }
-    function openRoom(name, tab) {
-      ROOM = name;
-      try { localStorage.setItem("luxador.room", name); } catch (e) {}
-      applyRoomChrome();
-      showRoomTab(tab);
-    }
-    let lastRoomData = null;
 
     function showMainView(name) {
       CURRENT_VIEW = name;
@@ -781,573 +506,46 @@
       document.getElementById("view-" + name).classList.add("active");
       document.getElementById("nav-" + name).classList.add("active");
       if (name === "overview") loadOverview();
-      if (name === "room") refreshRoom();
       if (name === "luxie") loadLuxie();
       if (name === "datalab") loadDataLab();
       if (name === "switch") loadLuxiePage();
     }
 
-    function showRoomTab(sub) {
-      showMainView("room");
-      document.querySelectorAll(".subview").forEach(el => el.classList.remove("active"));
-      document.querySelectorAll(".room-subnav button").forEach(el => el.classList.remove("active"));
-      document.getElementById("subview-" + sub).classList.add("active");
-      document.getElementById("sub-" + sub).classList.add("active");
-      if (sub === "time") runSim();
-      if (sub === "tweaks") loadYamls();
-    }
 
-    async function loadOverview() {
-      const data = await fetch("./api/overview").then(r => r.json());
-      document.getElementById("houseSummary").textContent =
-        `${data.house.note} • ${data.rooms.length} room(s) • ${data.ha_connected ? "Live HA WebSocket" : "SANDBOX (HA not connected)"}`;
-      document.getElementById("houseBadges").innerHTML = `
-        <span class="pill">House mode: not built</span>
-        <span class="pill ${data.opnsense.ready ? 'ok' : (data.opnsense.configured ? 'alert' : '')}">OPNsense: ${data.opnsense.ready ? 'live' : (data.opnsense.configured ? 'error' : 'not configured')}</span>`;
-      loadPhases(data);
-      updateHeaderBadges(data.ha_connected, data.dry_run, data.rooms[0]?.inferred_state || "Ready", data.rooms[0]?.lux_drift);
 
-      const cards = data.rooms.map(r => `
-        <div class="card">
-          <div class="row">
-            <h2>🛋️ ${r.friendly_name}</h2>
-            <span class="pill ${r.occupied ? 'ok' : ''}">${r.occupied ? 'Occupied' : 'Clear'}</span>
-          </div>
-          <div class="row" style="margin:10px 0;">
-            <div><div class="kpi">${Math.round(r.ambient_lux)} <span class="muted">lux</span></div><div class="muted">State: <strong>${r.inferred_state}</strong></div></div>
-            <div><div class="kpi">${r.active_roles}/${r.total_roles} <span class="muted">roles on</span></div><div class="muted">TV: <strong>${r.media_state}</strong></div></div>
-          </div>
-          <div class="muted" style="margin-bottom:6px;">Overlays: ${r.active_overlays.join(", ") || "none"} • Lux health: ${r.lux_drift.status}</div>
-          <div class="muted" style="margin-bottom:12px;">Pattern: <code>${r.signature || "empty"}</code> • state from ${r.state_source}</div>
-          ${(r.warnings || []).map(w => `<div class="muted" style="color:var(--gold);margin-bottom:6px;">⚠ ${w}</div>`).join("")}
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn primary" onclick="openRoom('${esc(r.room)}', 'targets')">Open ${esc(r.friendly_name)}</button>
-            <button class="btn" onclick="openRoom('${esc(r.room)}', 'presence')">Presence</button>
-            <button class="btn" onclick="openRoom('${esc(r.room)}', 'time')">Time &amp; Curves</button>
-            <button class="btn" onclick="openRoom('${esc(r.room)}', 'tweaks')">Tweaks</button>
-          </div>
-        </div>
-      `).join("");
 
-      document.getElementById("overviewRooms").innerHTML = cards;
-      loadHouseAreas();
-    }
 
-    function updateHeaderBadges(haConnected, dryRun, stateText, drift) {
-      document.getElementById("headerBadges").innerHTML = `
-        <span class="pill ${haConnected ? 'ok' : 'warn'}">${haConnected ? 'HA Live WS' : 'Live Snapshot Sandbox'}</span>
-        <span class="pill ${dryRun ? 'warn' : 'ok'}">${dryRun ? 'Dry-Run Safe' : 'Live Bulbs'}</span>
-        <span class="pill">${stateText}</span>
-        ${drift ? `<span class="pill ${drift.alert ? 'alert' : 'ok'}">Lux: ${drift.status}</span>` : ""}
-      `;
-    }
 
-    async function refreshRoom() {
-      const tOverride = document.getElementById("inTime")?.value.trim();
-      const qs = tOverride ? `?time_override=${encodeURIComponent(tOverride)}` : "";
-      const data = await fetch(`./api/rooms/${ROOM}/state${qs}`).then(r => r.json());
-      lastRoomData = data;
-      renderRoom(data);
-    }
 
-    function renderRoom(data) {
-      const ev = data.evaluation;
-      const cfg = data.room_config;
-      const inp = data.inputs;
-      const conf = ev.confidence;
-      updateHeaderBadges(data.ha_connected, data.dry_run, `${conf.inferred_state}`, data.lux_drift);
 
-      const rawT = new Date(ev.timestamp);
-      const eff = new Date(ev.effective_time);
-      document.getElementById("roomClockInfo").textContent =
-        `Clock ${rawT.toTimeString().slice(0,5)} → Effective ${eff.toTimeString().slice(0,5)} | Overlays: ${ev.active_overlays.join(", ") || "none"}`;
 
-      // Confirmation banner
-      const banner = document.getElementById("confirmBanner");
-      if (conf.needs_confirmation && conf.prompt_text) {
-        banner.style.display = "flex";
-        document.getElementById("confirmText").textContent = conf.prompt_text;
-      } else {
-        banner.style.display = "none";
-      }
 
-      // Warnings (fake/fallback data is never silent)
-      const wb = document.getElementById("warnBanner");
-      if ((inp.warnings || []).length) {
-        wb.style.display = "flex";
-        wb.innerHTML = `<div>⚠ ${inp.warnings.join("<br>⚠ ")}</div>`;
-      } else {
-        wb.style.display = "none";
-      }
 
-      // Presence tab details
-      renderPresenceTree(data.presence, inp);
-      document.getElementById("inOccupied").value = String(inp.occupied);
-      document.getElementById("inMedia").value = inp.media_state;
-      document.getElementById("zoneInputs").innerHTML = Object.keys(cfg.presence.zones || {}).map(z => `
-        <label>Zone: ${z}
-          <select data-zone="${z}" onchange="pushInputs()">
-            <option value="false" ${inp.zones?.[z] ? "" : "selected"}>Clear</option>
-            <option value="true" ${inp.zones?.[z] ? "selected" : ""}>Present</option>
-          </select>
-        </label>`).join("");
-      document.getElementById("inBedtime").value = String(Boolean(inp.bedtime));
-      document.getElementById("inIdle").value = String(inp.idle_minutes || 0);
-      document.getElementById("memWindowLabel").textContent = `${cfg.tweaks.presence_recent_minutes ?? 20} min`;
-      document.getElementById("presenceSensorsList").innerHTML = `
-        <div><strong>Room sensors:</strong> ${cfg.presence.sensors.map(s => `<code>${s}</code>`).join(", ")}</div>
-        <div style="margin-top:4px;"><strong>Clear delay:</strong> ${cfg.presence.clear_delay_seconds}s (holds room + zones)</div>
-      `;
-      document.getElementById("confidenceBreakdown").innerHTML = `
-        <strong>State:</strong> ${conf.inferred_state} <span class="tag">${conf.state_source}</span>
-        (Sleep ${Math.round(conf.sleep_confidence*100)}% • Working ${Math.round(conf.working_confidence*100)}% • TV ${Math.round(conf.tv_confidence*100)}%)
-      `;
 
-      // Targets tab: Lux + Schemas + Role cards
-      document.getElementById("luxVal").textContent = Math.round(inp.ambient_lux);
-      document.getElementById("inLux").value = Math.round(inp.ambient_lux);
-      document.getElementById("luxDriftMsg").textContent = data.lux_drift.message;
-      document.getElementById("luxSourceNote").textContent =
-        inp.lux_source === "sensor" ? "Live lux sensor." : inp.lux_source === "fallback" ? "⚠ Lux sensor unavailable: using a 120 lux guess." : "Sandbox value (slider).";
-      document.getElementById("luxGaugeBar").style.width = `${Math.min(100, Math.round((inp.ambient_lux / 600) * 100))}%`;
 
-      document.getElementById("schemaSwatches").innerHTML = Object.entries(data.schemas || {}).map(([name, sc]) => `
-        <div class="row" style="padding:6px 8px;background:var(--panel-2);border-radius:8px;">
-          <div><strong>${name}</strong> <span class="muted">(${sc.type})</span><div class="muted">${sc.description || ""}</div></div>
-          <span class="tag">${sc.type}</span>
-        </div>
-      `).join("");
 
-      document.getElementById("roleCards").innerHTML = Object.values(ev.roles).map(role => {
-        const rgb = role.color.rgb ? `rgb(${role.color.rgb.join(",")})` : "#ffd2a1";
-        const bd = role.breakdown;
-        const traits = (cfg.traits?.[role.role] || []).map(t => `<span class="tag">${t}</span>`).join("");
-        const liveEnt = role.entities.map(eid => {
-          const st = inp.entity_states?.[eid];
-          if (!st) return `<code>${eid}</code>`;
-          const bri = st.attributes?.brightness ? Math.round(st.attributes.brightness / 2.55) + "%" : st.state;
-          return `<code>${eid.replace("light.","")} (${bri})</code>`;
-        }).join(" ");
-        return `
-          <div class="card">
-            <div class="row">
-              <div style="display:flex;align-items:center;gap:10px;">
-                <div class="swatch" style="background:${role.on ? rgb : '#111'}"></div>
-                <div>
-                  <h3 style="margin:0">${role.role}</h3>
-                  <div class="muted">${role.color.schema_name} (${role.color.stage})${role.color.kelvin ? ' • ' + role.color.kelvin + 'K' : ''}</div>
-                </div>
-              </div>
-              <strong style="font-size:1.15rem">${role.on ? role.brightness_pct + '%' : 'OFF'}</strong>
-            </div>
-            <div style="margin:6px 0;">${traits}</div>
-            <div class="bar"><div class="bar-fill" style="width:${role.brightness_pct}%"></div></div>
-            <div class="breakdown">
-              <div><strong>Live Snapshot:</strong> ${liveEnt}</div>
-              <div><strong>Rule:</strong> <code>${bd.rule_matched}</code></div>
-              <div><strong>Why ${bd.final_pct}%?</strong> base ${bd.base_pct}% + overlay ${bd.overlay_delta_pct}% + learned ${bd.learned_baseline_pct}% + punch ${bd.active_punch_pct}%</div>
-              ${bd.notes.length ? `<div style="margin-top:4px;color:var(--gold)">${bd.notes.join(" • ")}</div>` : ""}
-            </div>
-            <div style="display:flex;gap:6px;margin-top:10px;">
-              <button class="btn" onclick="punch('${role.role}', 20)">Punch +20%</button>
-              <button class="btn" onclick="punch('${role.role}', -20)">Punch -20%</button>
-            </div>
-          </div>
-        `;
-      }).join("");
 
-      // Time tab rules table
-      document.querySelector("#rulesTable tbody").innerHTML = cfg.rules.map((line, idx) => {
-        const [r, c, b, s] = line.split("::").map(x => x.trim());
-        return `<tr>
-          <td><strong>${r}</strong></td><td><code>${c}</code></td><td><code>${b}</code></td><td><span class="tag">${s}</span></td>
-          <td><button class="btn danger" onclick="removeRule(${idx})">Remove</button></td>
-        </tr>`;
-      }).join("");
 
-      // Tweaks tab values
-      document.getElementById("twPresMins").value = cfg.tweaks.presence_recent_minutes ?? 20;
-      document.getElementById("twNoPresSleep").checked = cfg.tweaks.no_presence_before_sleep !== false;
-      document.getElementById("twMaxLux").value = cfg.tweaks.avoid_auto_on_above_lux ?? 250;
-      document.getElementById("twInputWake").checked = Boolean(cfg.tweaks.require_input_for_task_wake);
-      document.getElementById("twHoldManual").checked = Boolean(cfg.tweaks.hold_manual_until_clear);
-      document.getElementById("twHalfLife").value = cfg.punch_half_life_minutes;
-      document.getElementById("twClearDelay").value = cfg.presence.clear_delay_seconds;
 
-      document.getElementById("overlaysList").innerHTML = cfg.overlays.map(ov => `
-        <div class="breakdown" style="margin-bottom:8px;">
-          <div class="row"><strong>${ov.name} (priority ${ov.priority})</strong><code>when: ${ov.when}</code></div>
-          <div class="muted">Eases in/out over ${ov.blend_minutes} min • now ${Math.round(((data.overlay_weights || {})[ov.name] || 0) * 100)}%</div>
-          ${ov.time_warp_minutes ? `<div class="muted">Time Warp: up to +${ov.time_warp_minutes}m early shift (scaled by blend)</div>` : ""}
-          <div style="margin-top:4px;">${ov.rules.map(r => `<div><code>${r}</code></div>`).join("")}</div>
-        </div>
-      `).join("");
-    }
 
-    async function pushInputs() {
-      const payload = {
-        occupied: document.getElementById("inOccupied").value === "true",
-        ambient_lux: parseFloat(document.getElementById("inLux").value),
-        media_state: document.getElementById("inMedia").value,
-        bedtime: document.getElementById("inBedtime").value === "true",
-        zones: Object.fromEntries([...document.querySelectorAll("#zoneInputs select[data-zone]")]
-          .map(el => [el.dataset.zone, el.value === "true"])),
-        idle_minutes: parseFloat(document.getElementById("inIdle").value || "0"),
-        entity_states: lastRoomData?.inputs?.entity_states || {}
-      };
-      const data = await fetch(`./api/rooms/${ROOM}/inputs`, {
-        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
-      }).then(r => r.json());
-      lastRoomData = data;
-      renderRoom(data);
-    }
 
-    async function punch(role, delta) {
-      await fetch(`./api/rooms/${ROOM}/punch`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ role, delta_pct: delta, actor: "ui_punch" })
-      });
-      refreshRoom();
-    }
-
-    async function addRule() {
-      const rule = [
-        document.getElementById("newRuleRole").value,
-        document.getElementById("newRuleCond").value,
-        document.getElementById("newRuleBri").value,
-        document.getElementById("newRuleSchema").value
-      ].join(" :: ");
-      const res = await fetch(`./api/rooms/${ROOM}/rules/add`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ rule })
-      });
-      const body = await res.json();
-      const msg = document.getElementById("ruleMsg");
-      msg.style.color = res.ok ? "var(--green)" : "var(--red)";
-      msg.textContent = res.ok ? `Added curve rule: ${rule}` : body.detail;
-      if (res.ok) { refreshRoom(); runSim(); }
-    }
-
-    async function removeRule(index) {
-      await fetch(`./api/rooms/${ROOM}/rules/remove`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ index })
-      });
-      refreshRoom();
-      runSim();
-    }
-
-    async function saveTweaks() {
-      const res = await fetch(`./api/rooms/${ROOM}/tweaks`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          punch_half_life_minutes: parseFloat(document.getElementById("twHalfLife").value),
-          clear_delay_seconds: parseInt(document.getElementById("twClearDelay").value, 10),
-          tweaks: {
-            presence_recent_minutes: parseInt(document.getElementById("twPresMins").value, 10),
-            no_presence_before_sleep: document.getElementById("twNoPresSleep").checked,
-            avoid_auto_on_above_lux: parseInt(document.getElementById("twMaxLux").value, 10),
-            require_input_for_task_wake: document.getElementById("twInputWake").checked,
-            hold_manual_until_clear: document.getElementById("twHoldManual").checked
-          }
-        })
-      });
-      const msg = document.getElementById("tweaksMsg");
-      msg.style.color = res.ok ? "var(--green)" : "var(--red)";
-      msg.textContent = res.ok ? `Saved tweaks to ${ROOM}.yaml!` : "Error saving tweaks";
-      if (res.ok) refreshRoom();
-    }
-
-    async function sendConfirm(label) {
-      const conf = lastRoomData?.evaluation?.confidence;
-      if (!conf) return;
-      await fetch(`./api/luxie/${ROOM}/confirm`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ suggested_state: conf.inferred_state, user_label: label, confidence: conf.sleep_confidence })
-      });
-      if (label === "Sleeping") document.getElementById("inBedtime").value = "true";
-      pushInputs();
-    }
-
-    async function runSim() {
-      const luxRaw = document.getElementById("simLux").value;
-      const data = await fetch(`./api/rooms/${ROOM}/simulate-day`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          ambient_lux: luxRaw ? parseFloat(luxRaw) : null,
-          tv_on: document.getElementById("simTvOn").value || null,
-          tv_off: document.getElementById("simTvOff").value || null,
-          desk_active: document.getElementById("simDesk").value === "true",
-          punch_role: document.getElementById("simPunchRole").value || null,
-          punch_delta: parseFloat(document.getElementById("simPunchDelta").value || "0"),
-          punch_time: document.getElementById("simPunchTime").value || "20:15"
-        })
-      }).then(r => r.json());
-      drawSimChart(data);
-    }
-
-    function drawSimChart(data) {
-      const canvas = document.getElementById("simCanvas");
-      const ctx = canvas.getContext("2d");
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      const pad = { l: 42, r: 16, t: 18, b: 28 };
-      const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
-
-      ctx.strokeStyle = "#222a38"; ctx.fillStyle = "#8b949e"; ctx.font = "11px sans-serif";
-      for (let p = 0; p <= 100; p += 25) {
-        const y = pad.t + ph * (1 - p / 100);
-        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-        ctx.fillText(p + "%", 6, y + 4);
-      }
-      const pts = data.points;
-      for (let i = 0; i < pts.length; i += 8) {
-        const x = pad.l + (i / (pts.length - 1)) * pw;
-        ctx.fillText(pts[i].time, x - 14, H - 8);
-      }
-      const palette = Object.fromEntries(data.roles.map((r, k) => [r, seriesColor(k)]));
-      const legend = [];
-      for (const role of data.roles) {
-        const col = palette[role] || "#fff";
-        legend.push(`<span><span style="color:${col}">●</span> ${role}</span>`);
-        ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.beginPath();
-        pts.forEach((pt, idx) => {
-          const x = pad.l + (idx / (pts.length - 1)) * pw;
-          const y = pad.t + ph * (1 - (pt.roles[role]?.brightness_pct || 0) / 100);
-          if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-      }
-      document.getElementById("simLegend").innerHTML = legend.join("");
-    }
-
-    async function loadYamls() {
-      const [r1, r2] = await Promise.all([
-        fetch(`./api/yaml/room/${ROOM}`).then(r => r.json()),
-        fetch(`./api/yaml/schemas`).then(r => r.json())
-      ]);
-      document.getElementById("yamlRoom").value = r1.content;
-      document.getElementById("yamlSchemas").value = r2.content;
-    }
-
-    async function saveRoomYaml() {
-      const msg = document.getElementById("yamlRoomMsg");
-      const res = await fetch(`./api/yaml/room/${ROOM}`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ content: document.getElementById("yamlRoom").value })
-      });
-      const body = await res.json();
-      msg.style.color = res.ok ? "var(--green)" : "var(--red)";
-      msg.textContent = res.ok ? `Hot-applied (${body.rules_count} base rules).` : body.detail;
-      if (res.ok) refreshRoom();
-    }
-
-    async function saveSchemasYaml() {
-      const msg = document.getElementById("yamlSchemasMsg");
-      const res = await fetch(`./api/yaml/schemas`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ content: document.getElementById("yamlSchemas").value })
-      });
-      const body = await res.json();
-      msg.style.color = res.ok ? "var(--green)" : "var(--red)";
-      msg.textContent = res.ok ? `Hot-applied: ${body.schemas.join(", ")}` : body.detail;
-      if (res.ok) refreshRoom();
-    }
-
-    async function loadLuxie() {
-      const data = await fetch(`./api/luxie/${ROOM}/logs`).then(r => r.json());
-      document.querySelector("#offsetsTable tbody").innerHTML = data.offsets.map(o => `
-        <tr>
-          <td>${o.role}</td><td>${o.bucket_key}</td><td><strong>${o.offset_pct}%</strong></td><td>${o.override_count}</td>
-          <td>
-            <button class="btn" onclick="offsetAction('reset','${o.role}','${o.bucket_key}')">Reset</button>
-            <button class="btn" onclick="offsetAction('freeze','${o.role}','${o.bucket_key}',${!o.frozen})">${o.frozen ? 'Unfreeze' : 'Freeze'}</button>
-          </td>
-        </tr>
-      `).join("") || "<tr><td colspan='5' class='muted'>No learned offsets yet (punch a bulb 3+ times to train).</td></tr>";
-
-      const t = data.telemetry.counts;
-      document.getElementById("telemetryStats").innerHTML = `
-        <div>Hot Raw Events: <strong>${t.raw_events}</strong></div>
-        <div>Clean Hourly Buckets: <strong>${t.clean_hourly}</strong></div>
-        <div>Yearly Seasonal Cells: <strong>${t.yearly_baselines}</strong></div>
-        <div>Signal Changes: <strong>${t.signal_events}</strong> • Episodes: <strong>${t.episodes}</strong> • Light Samples: <strong>${t.light_samples}</strong></div>
-      `;
-      fetch(`./api/storage`).then(r => r.json()).then(renderStorage);
-      const [cont, weekly] = await Promise.all([
-        fetch(`./api/rooms/${ROOM}/contested`).then(r => r.json()),
-        fetch(`./api/learn/${ROOM}/weekly`).then(r => r.json()),
-      ]);
-      document.querySelector("#contestedTable tbody").innerHTML = cont.lights.map(l => `
-        <tr><td><code>${esc(l.entity_id)}</code></td>
-          <td>${Object.entries(l.by_kind).map(([k, n]) => `<span class="tag">${k} ×${n}</span>`).join("")}</td>
-          <td>${l.last_ts.slice(11,16)}</td>
-          <td>${l.fighting ? "<span class='pill alert'>fighting</span>" : ""}</td></tr>`).join("") ||
-        "<tr><td colspan='4' class='muted'>Nothing else has touched these lights in 24h.</td></tr>";
-      const prof = weekly.profile;
-      document.getElementById("weeklyProfile").innerHTML = weekly.sample_rows === 0
-        ? "No light samples yet (recorded only while connected to Home Assistant)."
-        : Object.entries(prof).map(([st, roles]) => `
-            <div class="breakdown"><strong>${esc(st)}</strong>
-              ${Object.entries(roles).map(([role, hrs]) => `<div>${esc(role)}: ${hrs.map(h =>
-                `${String(h.hour).padStart(2,"0")}h ${h.median_bri ?? 0}%${h.median_kelvin ? "/" + h.median_kelvin + "K" : ""}`).join(" · ")}</div>`).join("")}
-            </div>`).join("");
-      document.querySelector("#causalTable tbody").innerHTML = data.causal_logs.map(c => `
-        <tr>
-          <td>${c.ts.slice(11,19)}</td><td>${c.role}</td><td>${c.from_bri}% → <strong>${c.to_bri}%</strong></td>
-          <td><code>${c.actor}</code></td><td>${c.reason}</td>
-        </tr>
-      `).join("") || "<tr><td colspan='5' class='muted'>No causal transitions logged yet.</td></tr>";
-    }
-
-    async function triggerRollup() {
-      await fetch(`./api/luxie/${ROOM}/rollup`, { method: "POST" });
-      loadLuxie();
-    }
-
-    async function offsetAction(kind, role, bucket_key, frozen=false) {
-      await fetch(`./api/luxie/${ROOM}/offset/${kind}`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ role, bucket_key, frozen })
-      });
-      loadLuxie();
-    }
 
     function esc(v) {
       return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     }
 
-    function renderPresenceTree(p, inp) {
-      const el = document.getElementById("presenceTree");
-      if (!p) { el.innerHTML = "<div class='muted'>No presence snapshot yet.</div>"; return; }
-      const rec = document.getElementById("recordingPill");
-      rec.className = "pill " + (p.recorded ? "ok" : "warn");
-      rec.textContent = p.recorded ? "● Recording (Phase 1)" : "Sandbox: not recorded";
-      const health = window._signalHealth || {};
-      const sigRow = s => `<div style="margin-left:14px;">
-          <span class="tag" style="color:${!s.available ? 'var(--red)' : s.active ? 'var(--green)' : 'var(--muted)'}">${s.source}</span>
-          ${esc(s.name)}: <strong>${!s.available ? 'unavailable' : s.active ? 'active' : 'idle'}</strong>
-          <span class="muted">${esc(s.detail || (s.value ?? ""))}</span>
-          ${(health[s.key]?.issues || []).map(i => `<span class="pill alert" title="Not trusted for learning until fixed">${esc(i)}</span>`).join(" ")}</div>`;
-      const roomSigs = p.signals.filter(s => s.scope === "room");
-      const zones = Object.entries(p.zones).map(([zname, z]) => ({...z, name: zname})).map(z => `
-        <div class="breakdown">
-          <div class="row"><strong>Zone: ${esc(z.name)}</strong>
-            <span class="pill ${z.occupied ? 'ok' : ''}">${z.raw ? 'present' : z.held ? 'held (clear delay)' : 'clear'}</span></div>
-          ${Object.entries(z.sensors).map(([e, st]) => `<div style="margin-left:14px;"><code>${esc(e)}</code> = ${esc(st)}</div>`).join("")}
-          ${p.signals.filter(s => s.scope === z.name).map(sigRow).join("") || "<div class='muted' style='margin-left:14px;'>no signals attached</div>"}
-        </div>`).join("");
-      el.innerHTML = `
-        <div class="breakdown">
-          <div class="row"><strong>Room presence</strong>
-            <span class="pill ${p.occupied ? 'ok' : ''}">${p.occupied ? (p.room_held ? 'held (clear delay)' : 'occupied') : 'clear'}</span></div>
-          <div id="presenceSensorsList"></div>
-          ${roomSigs.map(sigRow).join("")}
-          <div style="margin-top:6px;">Still for <strong>${p.idle_minutes} min</strong></div>
-        </div>
-        ${zones}
-        <div class="breakdown">
-          <div><strong>Pattern now:</strong> <code>${esc(p.signature || "empty")}</code> since ${p.signature_since.slice(11,16)}
-            → <strong>${esc(inp.learned_state || "unnamed")}</strong>${inp.learned_match === "approx" ? " (closest match)" : ""}</div>
-          ${p.pending_signature !== null ? `<div class="muted">Settling: <code>${esc(p.pending_signature || "empty")}</code> (must hold before it counts)</div>` : ""}
-        </div>`;
-      loadPatterns();
-    }
 
-    async function loadPatterns() {
-      const data = await fetch(`./api/presence/${ROOM}`).then(r => r.json());
-      window._signalHealth = data.signal_health || {};
-      const rows = data.patterns.map(pt => `
-        <tr>
-          <td>${pt.tokens.length ? pt.tokens.map(t => `<span class="tag">${esc(t)}</span>`).join("") : "<span class='tag'>empty</span>"}
-            ${pt.propose ? "<div style='color:var(--gold);font-size:.75rem'>recurring: what is this?</div>" : ""}</td>
-          <td>${pt.count}× • ${pt.total_minutes}m</td>
-          <td>${pt.typical_hours.map(h => String(h).padStart(2, "0") + ":00").join(", ")}</td>
-          <td>${pt.signature === "" ? "<strong>empty</strong>" : `
-            <input value="${esc(pt.label || "")}" placeholder="e.g. working" style="width:110px" data-sig="${esc(pt.signature)}" />
-            <button class="btn" onclick="labelPattern(this.previousElementSibling)">Save</button>
-            <button class="btn" onclick="ignorePattern('${esc(pt.signature)}')">Ignore</button>`}</td>
-        </tr>`).join("");
-      document.querySelector("#patternsTable tbody").innerHTML = rows ||
-        `<tr><td colspan="4" class="muted">${data.recording ? "Nothing yet: patterns appear once they've lasted 2+ minutes." : "Sandbox mode: connect Home Assistant to start recording real patterns."}</td></tr>`;
-
-      const net = data.opnsense;
-      const np = document.getElementById("netPill");
-      np.className = "pill " + (net.ready ? "ok" : net.configured ? "alert" : "");
-      np.textContent = net.ready ? `${net.host_count} hosts` : net.configured ? "error" : "not configured";
-      const dev = await fetch(`./api/learn/${ROOM}/devices`).then(r => r.json());
-      const zoneNames = Object.keys(dev.zone_base_rates || {});
-      document.getElementById("devSummary").textContent =
-        `${dev.presence_minutes} minutes of recorded presence (last ${dev.days} days) • ${dev.devices.length} active devices seen`;
-      const kindCls = {zone: "ok", room: "info", background: ""};
-      const devRows = dev.devices.slice(0, 30).map(d => {
-        const best = d.zones.find(z => z.zone === d.best_zone);
-        const ev = best ? `${Math.round(best.p_zone * 100)}% of its busy time ${esc(best.zone)} occupied (×${best.lift} vs normal)`
-                        : `${Math.round(d.p_life * 100)}% of its busy time someone was home`;
-        let action = "";
-        if (d.status === "accepted") action = `<span class="pill ok">linked → ${esc(d.linked_zone)}</span> <button class="btn" onclick="decideDevice('${esc(d.host)}','clear')">Unlink</button>`;
-        else if (d.status === "ignored") action = `<span class="pill">ignored</span> <button class="btn" onclick="decideDevice('${esc(d.host)}','clear')">Undo</button>`;
-        else if (d.kind !== "background") action = `
-          <select data-host="${esc(d.host)}">${zoneNames.map(z => `<option ${z === d.best_zone ? "selected" : ""}>${esc(z)}</option>`).join("")}</select>
-          <button class="btn ${d.propose ? "primary" : ""}" onclick="decideDevice('${esc(d.host)}','accepted',this.previousElementSibling.value)">Link</button>
-          <button class="btn" onclick="decideDevice('${esc(d.host)}','ignored')">Ignore</button>`;
-        return `<tr><td><strong>${esc(d.hostname || d.host)}</strong><div class="muted">${esc(d.host)} • ${d.active_minutes} busy min${d.enough_data ? "" : " (not enough yet)"}</div></td>
-          <td><span class="pill ${kindCls[d.kind]}">${d.kind}</span></td><td class="muted">${ev}</td><td>${action}</td></tr>`;
-      }).join("");
-      document.querySelector("#netTable tbody").innerHTML = devRows ||
-        `<tr><td colspan="4" class="muted">${!net.configured ? "Add opnsense url/api_key/api_secret to settings.yaml (or env vars)."
-          : !net.ready ? esc(net.last_error || "waiting for first poll")
-          : !data.recording ? "Needs Home Assistant connected: devices are matched against real presence."
-          : "Collecting: devices appear once they've been busy during recorded presence."}</td></tr>`;
-    }
 
     async function decideDevice(host, status, zone = null) {
       await fetch(`./api/learn/${ROOM}/devices`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ host, status, zone })
       });
-      refreshRoom();
+      loadPresenceData();
     }
 
-    async function labelPattern(input) {
-      await fetch(`./api/presence/${ROOM}/label`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ signature: input.dataset.sig, label: input.value.trim() || null })
-      });
-      refreshRoom();
-    }
 
-    async function ignorePattern(sig) {
-      await fetch(`./api/presence/${ROOM}/label`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ signature: sig, label: null, ignored: true })
-      });
-      refreshRoom();
-    }
 
-    async function loadPhases(overview) {
-      const [logs, pres] = await Promise.all([
-        fetch(`./api/luxie/${ROOM}/logs`).then(r => r.json()),
-        fetch(`./api/presence/${ROOM}`).then(r => r.json()),
-      ]);
-      const c = logs.telemetry.counts;
-      const named = pres.patterns.filter(p => p.label && p.signature !== "").length;
-      const asking = pres.patterns.filter(p => p.propose).length;
-      const card = (title, status, cls, body) => `
-        <div class="breakdown"><div class="row"><strong>${title}</strong><span class="pill ${cls}">${status}</span></div>${body}</div>`;
-      document.getElementById("phaseCards").innerHTML = [
-        card("Phase 1 · Data", overview.ha_connected ? "recording" : "sandbox", overview.ha_connected ? "ok" : "warn",
-          `<div>Signal changes: <strong>${c.signal_events}</strong></div>
-           <div>Presence episodes: <strong>${c.episodes}</strong></div>
-           <div>Light samples (actual levels): <strong>${c.light_samples}</strong></div>`),
-        card("Phase 2 · Learn presence", named ? "learning" : "waiting", named ? "ok" : "",
-          `<div>Patterns seen: <strong>${pres.patterns.length}</strong></div>
-           <div>Named states: <strong>${named}</strong></div>
-           <div>Waiting for a name: <strong>${asking}</strong></div>`),
-        card("Phase 3 · Learn lighting", "preview only", "info",
-          `<div class="muted">Weekly rolling median of actual levels per state/hour. Needs ~7 days of Phase 1 data before it means anything.</div>`),
-      ].join("");
-    }
 
     // ===================================================================== DATA LAB (Grafana-lite)
     const DL = { range: "today", series: null, summary: null, pick: [] };
@@ -1376,6 +574,9 @@
       DL.summary = s;
       renderDlSummary(s);
       loadYear();
+      loadPresenceData();
+      loadTogether();
+      fetch(`./api/storage`).then(r => r.json()).then(renderStorage);
       await loadSeries();
     }
 
@@ -1408,92 +609,9 @@
     }
 
     // ---------------------------------------------------------------- summary cards
-    function renderDlSummary(s) {
-      const live = s.live_intent || {};
-      const post = Object.entries(live.posterior || {});
-      document.getElementById("dlLive").innerHTML = live.intent ? `
-        <div style="margin-bottom:6px;"><span class="kpi">${esc(live.intent)}</span>
-          <div class="muted">${esc(live.reason || "")}</div></div>
-        ${live.state ? `<div class="breakdown" style="margin-bottom:8px;"><strong>State #${live.state.id}${live.state.name ? " · " + esc(live.state.name) : ""}</strong><div>${esc(live.state.description)}</div></div>` : ""}
-        ${post.map(([k, p]) => `<div class="postbar"><span>${esc(k)}</span><div class="track"><div class="fill" style="width:${Math.round(p * 100)}%;background:${intentColor(k)}"></div></div><span class="muted">${Math.round(p * 100)}%</span></div>`).join("")}`
-        : `<div class="muted">${esc(live.reason || "No model yet.")} ${s.ha_connected ? "Import history to start." : "Connect Home Assistant, then import history."}</div>`;
 
-      const c = s.coverage || {};
-      const h = s.history || {};
-      document.getElementById("dlCoverage").innerHTML = c.slots ? `
-        <div><strong>${c.days}</strong> days on the grid (${c.first.replace("T", " ")} → ${c.last.replace("T", " ")})</div>
-        <div>${h.rows} raw HA rows from ${h.entities} entities (${Object.entries(h.by_source || {}).map(([k, v]) => `${v} ${k}`).join(", ")})</div>
-        <div style="margin-top:6px;">Missing: ${Object.entries(c.missing_share).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ")}</div>`
-        : "No history yet.";
 
-      const ev = s.evaluation;
-      document.getElementById("dlModel").innerHTML = !ev ? "Not trained yet." : !ev.enough_data ? `Needs more labelled data (${ev.labelled} slots).` : `
-        <div><span class="kpi">${Math.round(ev.accuracy * 100)}%</span> agreement on the newest ${ev.test} slots</div>
-        <div>Time of day alone: ${Math.round(ev.baseline_time_only * 100)}%</div>
-        <div style="margin-top:4px;">${Object.entries(ev.recall).map(([k, v]) => `<span class="tag">${esc(k)} ${Math.round(v * 100)}%</span>`).join("")}</div>
-        <div style="margin-top:6px;color:var(--gold)">${esc(ev.note)}</div>`;
 
-      renderHeatmap(s.traceback?.heatmap_weekday_hour || []);
-      renderSleep(s.sleep_wake || {});
-      renderStates(s.states || {});
-      renderPolicy(s.policy || {});
-      renderLabels(s.labels || [], s.policy || {});
-    }
-
-    function renderPolicy(pol) {
-      document.querySelector("#dlPolicy tbody").innerHTML = Object.entries(pol).sort((a, b) => b[1].priority - a[1].priority)
-        .map(([k, v]) => `<tr><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:${intentColor(k)}"></span>${esc(k)}</td><td>${v.priority}</td><td>${Math.round(v.min_confidence * 100)}%</td></tr>`).join("");
-    }
-
-    function renderLabels(labels, pol) {
-      const sel = document.getElementById("dlLabIntent");
-      if (!sel.options.length) sel.innerHTML = Object.keys(pol).map(k => `<option>${esc(k)}</option>`).join("");
-      document.querySelector("#dlLabels tbody").innerHTML = labels.map(l => `
-        <tr><td>${esc(l.start.replace("T", " "))}</td><td>${esc(l.end.replace("T", " "))}</td><td>${esc(l.intent)}</td>
-        <td><button class="btn danger" onclick="dlDeleteLabel(${l.id})">Remove</button></td></tr>`).join("") ||
-        "<tr><td colspan='4' class='muted'>No labels yet: everything is rule-labelled.</td></tr>";
-    }
-    async function dlAddLabel() {
-      const start = document.getElementById("dlLabStart").value, end = document.getElementById("dlLabEnd").value;
-      const intent = document.getElementById("dlLabIntent").value;
-      const res = await fetch(`./api/datalab/${ROOM}/labels`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ start, end, intent }) });
-      const body = await res.json();
-      document.getElementById("dlLabMsg").textContent = res.ok ? "Saved; model retrained." : (body.detail || "Failed");
-      if (res.ok) loadDataLab();
-    }
-    async function dlDeleteLabel(id) {
-      await fetch(`./api/datalab/${ROOM}/labels/${id}`, { method: "DELETE" });
-      loadDataLab();
-    }
-
-    function renderStates(m) {
-      const meta = document.getElementById("dlStatesMeta");
-      const merges = (m.states || []).filter(s => s.merged_from > 1).length;
-      meta.textContent = m.k ? `${(m.states || []).length} states (found ${m.k}${merges ? `, ${merges} merged by you` : ""}) · silhouette ${m.silhouette}` : (m.reason || "none yet");
-      const SUN = ["night", "twilight", "low", "high"];
-      document.querySelector("#dlStates tbody").innerHTML = (m.states || []).map(st => {
-        const lights = Object.entries(st.lights || {}).filter(([, v]) => v.on_ratio > 0).map(([role, v]) => {
-          const curve = SUN.filter(b => v.by_daylight?.[b] != null).map(b => `${b} ${Math.round(v.by_daylight[b])}%`).join(" → ");
-          return `<div><strong>${esc(role)}</strong> on ${Math.round(v.on_ratio * 100)}% of the time, ~${fmtPct(v.median_when_on)}${v.median_kelvin ? " · " + v.median_kelvin + "K" : ""}${curve ? ` <span class="muted">(${curve})</span>` : ""}</div>`;
-        }).join("") || "<span class='muted'>all off</span>";
-        return `<tr>
-          <td>${st.id}</td>
-          <td><input value="${esc(st.name || "")}" placeholder="name it…" style="width:120px" onchange="dlNameState(${st.id}, this.value)" />
-            <div class="muted" style="margin-top:3px;">${esc(st.description)}</div></td>
-          <td>${hoursSpark(st.hours)}</td>
-          <td>${Math.round(st.share * 100)}%</td>
-          <td>${st.intent ? `<span class="tag" style="color:var(--text);border-color:${intentColor(st.intent)}">${esc(st.intent)}</span> <span class="muted">${Math.round((st.intent_purity || 0) * 100)}%</span>` : "—"}</td>
-          <td style="font-size:.78rem;">${lights}</td></tr>`;
-      }).join("") || `<tr><td colspan="6" class="muted">${esc(m.reason || "Import history to discover states.")}</td></tr>`;
-    }
-    function hoursSpark(hours) {
-      const max = Math.max(1, ...hours);
-      return `<svg width="96" height="22" viewBox="0 0 96 22" role="img" aria-label="hours of day this state occurs">${hours.map((v, h) =>
-        `<rect x="${h * 4}" y="${22 - Math.max(1, (v / max) * 20)}" width="3" height="${Math.max(1, (v / max) * 20)}" rx="1" fill="${cssv("--s1")}" opacity="${v ? 1 : 0.15}"><title>${String(h).padStart(2, "0")}:00 · ${v} slots</title></rect>`).join("")}</svg>`;
-    }
-    async function dlNameState(id, name) {
-      await fetch(`./api/datalab/${ROOM}/states/${id}/name`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ name }) });
-    }
 
     // ---------------------------------------------------------------- timeline (stacked panels, shared crosshair)
     function timeTicks(t, range) {
@@ -1618,14 +736,6 @@
         tip.style.top = `${ev.clientY + 14}px`;
       });
       hit.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("opacity", 0); });
-      hit.addEventListener("click", (ev) => {
-        const t = d.t[idxAt(ev)];
-        DL.pick = DL.pick.length >= 2 ? [t] : [...DL.pick, t];
-        const [a, b] = [...DL.pick].sort();
-        document.getElementById("dlLabStart").value = a;
-        if (b) document.getElementById("dlLabEnd").value = b;
-        document.getElementById("dlLabMsg").textContent = b ? "Range picked: choose an intent and add it." : "Start picked: click again for the end.";
-      });
 
       // table view (accessibility / exact values)
       document.getElementById("dlTable").innerHTML = `<table><thead><tr><th>Time</th><th>Label</th><th>Sees</th><th>State</th><th>Lux in</th><th>Lux out</th>${roles.map(r => `<th>${esc(r)}</th>`).join("")}<th>Present</th><th>TV</th></tr></thead><tbody>${
@@ -2281,6 +1391,149 @@
         luxieSays("Imported! Everything checked out, nya~");
         loadHouse();
       } catch (e) { luxieSays("That doesn't look like a Luxador model file."); }
+    }
+
+
+    function openRoom(name) {
+      ROOM = name;
+      try { localStorage.setItem("luxador.room", name); } catch (e) {}
+      applyRoomChrome();
+      showMainView("switch");
+    }
+
+    function updateHeaderBadges(haConnected, dryRun) {
+      document.getElementById("headerBadges").innerHTML = `
+        <span class="pill ${haConnected ? 'ok' : 'alert'}">${haConnected ? 'Home Assistant connected' : 'Not connected'}</span>
+        <span class="pill ${dryRun ? 'warn' : 'ok'}">${dryRun ? 'Dry run: lights untouched' : 'Driving lights'}</span>`;
+    }
+
+    async function loadOverview() {
+      const data = await fetch("./api/overview").then(r => r.json());
+      updateHeaderBadges(data.ha_connected, data.dry_run);
+      document.getElementById("houseSummary").textContent = data.ha_connected
+        ? `${data.rooms.length} room(s) · reading Home Assistant live`
+        : "Not connected to Home Assistant, so there's nothing real to show yet.";
+      document.getElementById("houseBadges").innerHTML = `
+        <span class="pill ${data.opnsense.ready ? 'ok' : (data.opnsense.configured ? 'alert' : '')}">OPNsense: ${data.opnsense.ready ? 'live' : (data.opnsense.configured ? 'error' : 'not set up')}</span>`;
+      document.getElementById("overviewRooms").innerHTML = data.rooms.map(r => `
+        <div class="card">
+          <div class="row">
+            <h2>${esc(r.friendly_name)}</h2>
+            ${data.ha_connected ? `<span class="pill ${r.occupied ? 'ok' : ''}">${r.occupied ? 'Someone here' : 'Empty'}</span>` : `<span class="pill">unknown</span>`}
+          </div>
+          ${data.ha_connected ? `
+          <div class="row" style="margin:10px 0;">
+            <div><div class="kpi">${r.ambient_lux != null ? Math.round(r.ambient_lux) : "—"} <span class="muted">lux</span></div><div class="muted">${r.media_state === "playing" ? "TV on" : "TV off"}</div></div>
+            <div><div class="kpi">${r.active_roles}/${r.total_roles}</div><div class="muted">lights would be on</div></div>
+          </div>` : ""}
+          ${(r.warnings || []).map(w => `<div class="muted" style="color:var(--gold);margin-bottom:6px;">⚠ ${esc(w)}</div>`).join("")}
+          <button class="btn primary" onclick="openRoom('${esc(r.room)}')">Open in Luxie</button>
+        </div>`).join("");
+      loadHouseAreas();
+      const cont = await fetch(`./api/rooms/${ROOM}/contested`).then(r => r.json());
+      document.querySelector("#contestedTable tbody").innerHTML = cont.lights.map(l => `
+        <tr><td><code>${esc(l.entity_id)}</code></td>
+          <td>${Object.entries(l.by_kind).map(([k, n]) => `<span class="tag">${k} ×${n}</span>`).join("")}</td>
+          <td>${l.last_ts.slice(11, 16)}</td>
+          <td>${l.fighting ? "<span class='pill alert'>fighting</span>" : ""}</td></tr>`).join("") ||
+        `<tr><td colspan="4" class="muted">${data.ha_connected ? "Nothing else has touched these lights in 24 h." : "Needs Home Assistant connected."}</td></tr>`;
+    }
+
+    async function loadLuxie() {
+      const data = await fetch(`./api/luxie/${ROOM}/logs`).then(r => r.json());
+      document.querySelector("#causalTable tbody").innerHTML = data.causal_logs.map(c => `
+        <tr><td>${c.ts.slice(11, 19)}</td><td>${esc(c.role)}</td><td>${c.from_bri}% → <strong>${c.to_bri}%</strong></td>
+          <td><code>${esc(c.actor)}</code></td><td>${esc(c.reason)}</td></tr>`).join("") ||
+        "<tr><td colspan='5' class='muted'>No changes logged yet.</td></tr>";
+    }
+
+    function renderPresenceTree(p) {
+      const el = document.getElementById("presenceTree");
+      if (!p) { el.innerHTML = "<div class='muted'>No presence snapshot yet.</div>"; return; }
+      const rec = document.getElementById("recordingPill");
+      rec.className = "pill " + (p.recorded ? "ok" : "alert");
+      rec.textContent = p.recorded ? "● recording" : "not connected";
+      if (!p.recorded) { el.innerHTML = "Connect Home Assistant to see live presence, zones and signals here."; return; }
+      const health = window._signalHealth || {};
+      const sigRow = s => `<div style="margin-left:14px;">
+          <span class="tag" style="color:${!s.available ? 'var(--red)' : s.active ? 'var(--green)' : 'var(--muted)'}">${s.source}</span>
+          ${esc(s.name)}: <strong>${!s.available ? 'unavailable' : s.active ? 'active' : 'idle'}</strong>
+          <span class="muted">${esc(s.detail || (s.value ?? ""))}</span>
+          ${(health[s.key]?.issues || []).map(i => `<span class="pill alert">${esc(i)}</span>`).join(" ")}</div>`;
+      const zones = Object.entries(p.zones).map(([zname, z]) => `
+        <div class="breakdown">
+          <div class="row"><strong>Zone · ${esc(zname)}</strong>
+            <span class="pill ${z.occupied ? 'ok' : ''}">${z.raw ? 'present' : z.held ? 'held (clear delay)' : 'clear'}</span></div>
+          ${Object.entries(z.sensors).map(([e, st]) => `<div style="margin-left:14px;"><code>${esc(e)}</code> = ${esc(st)}</div>`).join("")}
+          ${p.signals.filter(s => s.scope === zname).map(sigRow).join("")}
+        </div>`).join("");
+      el.innerHTML = `
+        <div class="breakdown"><div class="row"><strong>Room</strong>
+          <span class="pill ${p.occupied ? 'ok' : ''}">${p.occupied ? (p.room_held ? 'held (clear delay)' : 'someone here') : 'empty'}</span></div>
+          ${p.signals.filter(s => s.scope === "room").map(sigRow).join("")}
+          <div style="margin-top:4px;">Still for <strong>${p.idle_minutes} min</strong></div></div>
+        ${zones}`;
+    }
+
+    async function loadPresenceData() {
+      const data = await fetch(`./api/presence/${ROOM}`).then(r => r.json());
+      window._signalHealth = data.signal_health || {};
+      renderPresenceTree(data.snapshot);
+      const net = data.opnsense;
+      const np = document.getElementById("netPill");
+      np.className = "pill " + (net.ready ? "ok" : net.configured ? "alert" : "");
+      np.textContent = net.ready ? `${net.host_count} hosts` : net.configured ? "error" : "not set up";
+      const dev = await fetch(`./api/learn/${ROOM}/devices`).then(r => r.json());
+      const zoneNames = Object.keys(dev.zone_base_rates || {});
+      document.getElementById("devSummary").textContent = net.ready
+        ? `${dev.presence_minutes} minutes of recorded presence (last ${dev.days} days) · ${dev.devices.length} active devices seen` : "";
+      const kindCls = {zone: "ok", room: "info", background: ""};
+      document.querySelector("#netTable tbody").innerHTML = dev.devices.slice(0, 30).map(d => {
+        const best = d.zones.find(z => z.zone === d.best_zone);
+        const ev = best ? `${Math.round(best.p_zone * 100)}% of its busy time ${esc(best.zone)} occupied (×${best.lift})`
+                        : `${Math.round(d.p_life * 100)}% of its busy time someone was home`;
+        let action = "";
+        if (d.status === "accepted") action = `<span class="pill ok">linked → ${esc(d.linked_zone)}</span> <button class="btn" onclick="decideDevice('${esc(d.host)}','clear')">Unlink</button>`;
+        else if (d.status === "ignored") action = `<span class="pill">ignored</span> <button class="btn" onclick="decideDevice('${esc(d.host)}','clear')">Undo</button>`;
+        else if (d.kind !== "background") action = `
+          <select data-host="${esc(d.host)}">${zoneNames.map(z => `<option ${z === d.best_zone ? "selected" : ""}>${esc(z)}</option>`).join("")}</select>
+          <button class="btn ${d.propose ? "primary" : ""}" onclick="decideDevice('${esc(d.host)}','accepted',this.previousElementSibling.value)">Link</button>
+          <button class="btn" onclick="decideDevice('${esc(d.host)}','ignored')">Ignore</button>`;
+        return `<tr><td><strong>${esc(d.hostname || d.host)}</strong><div class="muted">${esc(d.host)} · ${d.active_minutes} busy min${d.enough_data ? "" : " (not enough yet)"}</div></td>
+          <td><span class="pill ${kindCls[d.kind]}">${d.kind}</span></td><td class="muted">${ev}</td><td>${action}</td></tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">${!net.configured ? "Set OPNsense url / api_key / api_secret in the app's Configuration tab to add network devices as a data source."
+          : !net.ready ? esc(net.last_error || "waiting for first poll")
+          : "Collecting: devices appear once they've been busy while presence was being recorded."}</td></tr>`;
+    }
+
+    function renderDlSummary(s) {
+      const c = s.coverage || {};
+      const h = s.history || {};
+      document.getElementById("dlCoverage").innerHTML = c.slots ? `
+        <div><strong>${c.days}</strong> days on the grid (${c.first.replace("T", " ")} → ${c.last.replace("T", " ")})</div>
+        <div>${h.rows} raw rows from ${h.entities} Home Assistant entities (${Object.entries(h.by_source || {}).map(([k, v]) => `${v} ${k}`).join(", ")})</div>
+        <div style="margin-top:6px;">Missing: ${Object.entries(c.missing_share).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ")}</div>`
+        : (s.ha_connected ? "No history yet: press Import history." : "No history yet: connect Home Assistant, then import.");
+      renderHeatmap(s.traceback?.heatmap_weekday_hour || []);
+      renderSleep(s.sleep_wake || {});
+    }
+
+    async function loadTogether() {
+      const t = await fetch(`./api/datalab/${ROOM}/together`).then(r => r.json());
+      const host = document.getElementById("tgTable");
+      document.getElementById("tgMeta").textContent = t.slots ? `${t.slots} five-minute slots` : "";
+      if (!t.signals.length) { host.innerHTML = `<div class="muted">Needs history: import some first.</div>`; return; }
+      const usual = (u) => ["weekday", "weekend"].map(dt => (u[dt] || []).length
+        ? `<div><span class="muted">${dt}s</span> ${u[dt].map(w => `${w.from}–${w.to} <span class="muted">${Math.round(w.p * 100)}%</span>`).join(", ")}</div>` : "").join("") || `<span class="muted">no fixed time</span>`;
+      const starts = (st) => ["weekday", "weekend"].map(dt => (st[dt] || []).length
+        ? `<div><span class="muted">${dt}s</span> ${st[dt].map(c => c.median).join(", ")}</div>` : "").join("") || `<span class="muted">—</span>`;
+      host.innerHTML = `<table><thead><tr><th>Signal</th><th>Goes with</th><th>Usually</th><th>Starts</th><th>Now</th></tr></thead><tbody>${
+        t.signals.map(sg => `<tr>
+          <td><strong>${esc(sg.label)}</strong><div class="muted">on ${Math.round((sg.share || 0) * 100)}% of the time</div></td>
+          <td>${sg.goes_with.map(g => `<div>${esc(g.label)} <span class="muted">${Math.round(g.p * 100)}% · ×${g.lift}</span></div>`).join("") || `<span class="muted">nothing stands out</span>`}</td>
+          <td>${usual(sg.usual)}</td>
+          <td>${starts(sg.starts)}</td>
+          <td>${sg.now_p == null ? "—" : `<strong>${Math.round(sg.now_p * 100)}%</strong>`}</td></tr>`).join("")}</tbody></table>`;
     }
 
     initRooms().then(loadOverview);

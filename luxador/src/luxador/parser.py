@@ -249,8 +249,6 @@ def load_room_yaml(yaml_text: str) -> RoomConfig:
         bulb_lux_gain={str(k): float(v) for k, v in data.get("bulb_lux_gain", {}).items()},
         punch_half_life_minutes=float(data.get("punch_half_life_minutes", 45.0)),
         bulbs=bulbs,
-        traits={str(k): [str(t) for t in v] for k, v in (data.get("traits") or {}).items()},
-        tweaks=dict(data.get("tweaks") or {}),
         rules=base_rules,
         overlays=overlays,
     )

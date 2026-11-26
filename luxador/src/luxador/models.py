@@ -114,8 +114,6 @@ class RoomConfig(BaseModel):
     bulb_lux_gain: dict[str, float] = Field(default_factory=dict)
     punch_half_life_minutes: float = 45.0
     bulbs: dict[str, list[str]] = Field(default_factory=dict)
-    traits: dict[str, list[str]] = Field(default_factory=dict)
-    tweaks: dict[str, Any] = Field(default_factory=dict)
     rules: list[ParsedRule] = Field(default_factory=list)
     overlays: list[OverlayConfig] = Field(default_factory=list)
 
@@ -171,8 +169,8 @@ class RoomInputs(BaseModel):
     entity_states: dict[str, dict[str, Any]] = Field(default_factory=dict)
     idle_minutes: float = 0.0
     signature: str = ""
-    learned_state: str | None = None
-    learned_match: str | None = None  # "exact" | "approx" | None
+    learned_state: str | None = None  # the current discovered state's intent (sleep, evening, ...)
+    state_name: str | None = None
     lux_source: str = "sensor"
     warnings: list[str] = Field(default_factory=list)
     sun_elev: float | None = None
@@ -180,15 +178,10 @@ class RoomInputs(BaseModel):
 
 
 class StateConfidence(BaseModel):
-    """Luxie's confidence estimate for inferred room state."""
+    """What the room is doing, from the discovered state it's in (no hardcoded guesses)."""
 
     inferred_state: str
-    state_source: str = "heuristic"  # "learned" when it came from a pattern you named
-    sleep_confidence: float
-    working_confidence: float
-    tv_confidence: float
-    needs_confirmation: bool = False
-    prompt_text: str | None = None
+    state_source: str = "none"  # "state" = from a discovered state, "presence" = only presence known
 
 
 class RoomEvaluation(BaseModel):

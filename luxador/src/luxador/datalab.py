@@ -6,10 +6,9 @@ See docs/phase1-data.md for the design. Everything here is read-only with respec
 from __future__ import annotations
 
 import json
-import math
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from statistics import median
 from typing import Any, Iterable
@@ -23,19 +22,8 @@ INTENTS = ["wake", "sleep", "nightlight", "evening", "day", "away"]
 NIGHTLIGHT_MAX_PCT = 15
 SLEEP_MIN_SLOTS = 36  # 3 h
 WAKE_SLOTS = 6  # 30 min
-USER_LABEL_WEIGHT = 5.0
 _ON_WORDS = {"on", "home", "detected", "occupied", "open", "true"}
 _KEEP_ATTRS = ("brightness", "color_temp_kelvin", "rgb_color", "elevation")
-
-DEFAULT_INTENT_POLICY: dict[str, dict[str, float]] = {
-    "wake": {"priority": 90, "min_confidence": 0.45},
-    "sleep": {"priority": 80, "min_confidence": 0.60},
-    "nightlight": {"priority": 60, "min_confidence": 0.40},
-    "evening": {"priority": 40, "min_confidence": 0.30},
-    "day": {"priority": 30, "min_confidence": 0.30},
-    "away": {"priority": 20, "min_confidence": 0.50},
-}
-
 
 # --------------------------------------------------------------------------- time helpers
 
@@ -241,8 +229,8 @@ def _active(s: dict[str, Any]) -> bool:
     return s.get("occupied") == 1 or (s.get("light_max") or 0) > 0 or s.get("media") == 1
 
 
-def label_slots(slots: list[dict[str, Any]], user_labels: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """Rule labels (scaffolding) then user labels on top. Mutates and returns slots."""
+def label_slots(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rule labels: sleep / nightlight / wake / evening / day / away. They name the discovered states' intents."""
     for s in slots:
         s["intent"], s["intent_source"] = None, None
     keys = [s["slot"] for s in slots]
@@ -293,176 +281,19 @@ def label_slots(slots: list[dict[str, Any]], user_labels: list[dict[str, Any]] |
             continue
         s["intent_source"] = "rule"
 
-    for lab in user_labels or []:
-        for s in slots:
-            if lab["start"] <= s["slot"] < lab["end"]:
-                s["intent"], s["intent_source"] = lab["intent"], "user"
     return slots
 
 
-# --------------------------------------------------------------------------- 1.4 the model
-
-def _bucket(v: float | None, edges: list[tuple[float, str]], top: str) -> str:
-    if v is None:
-        return "na"
-    for edge, name in edges:
-        if v < edge:
-            return name
-    return top
-
-
-def slot_features(s: dict[str, Any], since_active_min: float | None) -> dict[str, str]:
-    """Inputs the intent model may use. Light level is deliberately absent (no self-reinforcement),
-    and so is indoor lux, because the room's own lights dominate it."""
-    if since_active_min is None:
-        since = "na"
-    elif since_active_min <= 0:
-        since = "now"
-    else:
-        since = _bucket(since_active_min, [(31, "<30m"), (121, "<2h"), (361, "<6h")], "6h+")
-    return {
-        "sun": _bucket(s.get("sun_elev"), [(-6, "night"), (0, "twilight"), (15, "low")], "high"),
-        "lux_out": _bucket(s.get("lux_out"), [(10, "dark"), (1000, "dim"), (10000, "mid")], "bright"),
-        "occupied": "na" if s.get("occupied") is None else str(s["occupied"]),
-        "media": "na" if s.get("media") is None else str(s["media"]),
-        "since_active": since,
-    }
-
+# --------------------------------------------------------------------------- 1.4 activity clock
 
 def add_since_active(slots: list[dict[str, Any]]) -> None:
+    """Minutes since the room was last active (presence, light or TV); a context feature for states."""
     last = None
     for s in slots:
         t = datetime.fromisoformat(s["slot"])
         if _active(s):
             last = t
         s["_since_active"] = 0.0 if last == t else ((t - last).total_seconds() / 60.0 if last else None)
-
-
-@dataclass
-class IntentModel:
-    prior: dict[str, dict[str, float]] = field(default_factory=dict)  # "hour|daytype" -> intent -> weight
-    global_prior: dict[str, float] = field(default_factory=dict)
-    lik: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)  # feat -> intent -> value -> w
-    values: dict[str, list[str]] = field(default_factory=dict)
-    intent_totals: dict[str, float] = field(default_factory=dict)
-    trained_on: int = 0
-
-    @staticmethod
-    def _key(s: dict[str, Any]) -> str:
-        return f"{s['minute_of_day'] // 60}|{s['daytype']}"
-
-    def fit(self, slots: list[dict[str, Any]]) -> "IntentModel":
-        prior: dict[str, Counter] = defaultdict(Counter)
-        gp: Counter = Counter()
-        lik: dict[str, dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
-        totals: Counter = Counter()
-        vals: dict[str, set] = defaultdict(set)
-        n = 0
-        for s in slots:
-            it = s.get("intent")
-            if not it:
-                continue
-            w = USER_LABEL_WEIGHT if s.get("intent_source") == "user" else 1.0
-            prior[self._key(s)][it] += w
-            gp[it] += w
-            totals[it] += w
-            for f, v in slot_features(s, s.get("_since_active")).items():
-                lik[f][it][v] += w
-                vals[f].add(v)
-            n += 1
-        self.prior = {k: dict(c) for k, c in prior.items()}
-        self.global_prior = dict(gp)
-        self.lik = {f: {i: dict(c) for i, c in d.items()} for f, d in lik.items()}
-        self.values = {f: sorted(v) for f, v in vals.items()}
-        self.intent_totals = dict(totals)
-        self.trained_on = n
-        return self
-
-    def prior_for(self, hour: int, daytype: str) -> dict[str, float]:
-        g_total = sum(self.global_prior.values()) or 1.0
-        local = self.prior.get(f"{hour}|{daytype}", {})
-        l_total = sum(local.values())
-        alpha = 3.0  # back off toward the all-hours prior when an hour has little data
-        out = {}
-        for it in self.global_prior:
-            g = self.global_prior[it] / g_total
-            out[it] = (local.get(it, 0.0) + alpha * g) / (l_total + alpha)
-        return out
-
-    def predict(self, hour: int, daytype: str, feats: dict[str, str]) -> dict[str, float]:
-        if not self.global_prior:
-            return {}
-        logp = {it: math.log(max(p, 1e-9)) for it, p in self.prior_for(hour, daytype).items()}
-        for f, v in feats.items():
-            if v == "na" or f not in self.lik:
-                continue  # unknown evidence says nothing
-            n_vals = len(self.values.get(f, [])) + 1
-            for it in logp:
-                c = self.lik[f].get(it, {}).get(v, 0.0)
-                logp[it] += math.log((c + 1.0) / (self.intent_totals.get(it, 0.0) + n_vals))
-        m = max(logp.values())
-        exp = {it: math.exp(lp - m) for it, lp in logp.items()}
-        z = sum(exp.values())
-        return {it: round(e / z, 4) for it, e in sorted(exp.items(), key=lambda kv: -kv[1])}
-
-    def predict_slot(self, s: dict[str, Any]) -> dict[str, float]:
-        return self.predict(s["minute_of_day"] // 60, s["daytype"], slot_features(s, s.get("_since_active")))
-
-    def to_json(self) -> str:
-        return json.dumps(self.__dict__)
-
-    @classmethod
-    def from_json(cls, raw: str) -> "IntentModel":
-        return cls(**json.loads(raw))
-
-
-def evaluate(slots: list[dict[str, Any]], holdout_share: float = 0.2) -> dict[str, Any]:
-    """Train on the older 80 % of labelled slots, test on the newest 20 %. Compared with a prior-only baseline."""
-    labelled = [s for s in slots if s.get("intent")]
-    if len(labelled) < 50:
-        return {"enough_data": False, "labelled": len(labelled)}
-    cut = int(len(labelled) * (1 - holdout_share))
-    train, test = labelled[:cut], labelled[cut:]
-    m = IntentModel().fit(train)
-    hits = base_hits = 0
-    per: dict[str, list[int]] = defaultdict(lambda: [0, 0])
-    for s in test:
-        post = m.predict_slot(s)
-        guess = next(iter(post), None)
-        base = max(m.prior_for(s["minute_of_day"] // 60, s["daytype"]).items(), key=lambda kv: kv[1])[0]
-        ok = guess == s["intent"]
-        hits += ok
-        base_hits += base == s["intent"]
-        per[s["intent"]][0] += ok
-        per[s["intent"]][1] += 1
-    return {
-        "enough_data": True,
-        "train": len(train),
-        "test": len(test),
-        "accuracy": round(hits / len(test), 3),
-        "baseline_time_only": round(base_hits / len(test), 3),
-        "recall": {k: round(v[0] / v[1], 3) for k, v in per.items()},
-        "note": "Measured against labels that are mostly rule-generated; add your own labels for real ground truth.",
-    }
-
-
-def arbitrate(post: dict[str, float], policy: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
-    """Highest-priority intent whose probability clears its threshold; else the most probable."""
-    policy = policy or DEFAULT_INTENT_POLICY
-    if not post:
-        return {"intent": None, "reason": "no model yet"}
-    eligible = [
-        (policy.get(it, {}).get("priority", 0), it) for it, p in post.items()
-        if p >= policy.get(it, {}).get("min_confidence", 0.5)
-    ]
-    if eligible:
-        pr, it = max(eligible)
-        top = max(post, key=post.get)
-        reason = (f"{it} ({post[it]:.0%}) clears {policy[it]['min_confidence']:.0%}"
-                  + (f" and outranks {top} ({post[top]:.0%})" if top != it else ""))
-        return {"intent": it, "p": post[it], "reason": reason}
-    top = max(post, key=post.get)
-    return {"intent": top, "p": post[top], "reason": "nothing cleared its threshold; most probable"}
 
 
 # --------------------------------------------------------------------------- predictions & traceback
@@ -652,31 +483,16 @@ def seasonal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- orchestration
 
-def intent_by_hour(slots: list[dict[str, Any]]) -> dict[str, list[float]]:
-    counts = [Counter() for _ in range(24)]
-    for s in slots:
-        if s.get("intent"):
-            counts[s["minute_of_day"] // 60][s["intent"]] += 1
-    out: dict[str, list[float]] = {it: [] for it in INTENTS}
-    for c in counts:
-        tot = sum(c.values())
-        for it in INTENTS:
-            out[it].append(round(c[it] / tot, 3) if tot else 0.0)
-    return {it: v for it, v in out.items() if any(v)}
-
-
 class DataLab:
-    """Runs the Phase 1 pipeline for every room: import -> grid -> labels -> model -> summaries."""
+    """Runs the Phase 1 pipeline for every room: import -> 5-minute grid -> labels -> discovered states."""
 
     CAPTURE_MIN_SECONDS = 60  # numeric sensors (lux) are thinned to one row a minute unless they jump
 
-    def __init__(self, store: Any, rooms: dict[str, RoomConfig], settings: dict[str, Any], bridge: Any,
-                 policy: dict[str, dict[str, float]] | None = None) -> None:
+    def __init__(self, store: Any, rooms: dict[str, RoomConfig], settings: dict[str, Any], bridge: Any) -> None:
         self.store = store
         self.rooms = rooms
         self.settings = settings
         self.bridge = bridge
-        self.policy = policy or DEFAULT_INTENT_POLICY
         self.status: dict[str, Any] = {"state": "idle"}
         self._last_capture: dict[str, tuple[float, float | None]] = {}
 
@@ -762,15 +578,12 @@ class DataLab:
         self.fold_aged_slots(room, floor_slot(start.astimezone(self.tz())).strftime("%Y-%m-%dT%H:%M"))
         hist = self.store.load_history(ents.all(), since_iso=start.isoformat())
         slots = build_slots(ents, hist, start, end, self.tz())
-        label_slots(slots, self.store.get_intent_labels(room))
+        label_slots(slots)
         add_since_active(slots)
         state_model = discover_states(slots, int(self.settings.get("max_states", 28) or 28),
                                       named=self.state_names(room), merges=self._get(room, "state_merges"),
                                       links=self._get(room, "state_links"))
         self.store.replace_slots(room, slots)
-        model = IntentModel().fit(slots)
-        self.store.save_model(room, "intent_nb", model.to_json())
-        self.store.save_model(room, "intent_eval", json.dumps(evaluate(slots)))
         self.store.save_model(room, "states", json.dumps(state_model))
         cov = coverage(slots)
         cov["states"] = state_model.get("k", 0)
@@ -910,35 +723,25 @@ class DataLab:
             "roles": list(self.rooms[room].bulbs),
         }
 
-    def model(self, room: str) -> IntentModel | None:
-        m = self.store.load_model(room, "intent_nb")
-        return IntentModel.from_json(m[1]) if m else None
-
-    def live_intent(self, room: str, occupied: bool, media_playing: bool, since_active_min: float | None,
-                    now: datetime | None = None, zones: dict[str, bool] | None = None) -> dict[str, Any]:
-        m = self.model(room)
-        if m is None or not m.trained_on:
-            return {"intent": None, "reason": "no history imported yet", "posterior": {}}
+    def live_state(self, room: str, occupied: bool, media_playing: bool, zones: dict[str, bool] | None,
+                   since_active_min: float | None, now: datetime | None = None) -> dict[str, Any] | None:
+        """Which discovered state the room is in right now (nearest centre in context space), or None."""
+        model = self.states(room)
+        if not model.get("states"):
+            return None
         now = (now or datetime.now(timezone.utc)).astimezone(self.tz())
         states = getattr(self.bridge, "states", {}) or {}
-        sun = (states.get(self.settings.get("sun_entity", "sun.sun")) or {}).get("attributes", {}).get("elevation")
-        lux_out = _num((states.get(self.settings.get("outdoor_lux_sensor") or "") or {}).get("state"))
-        s = {"minute_of_day": now.hour * 60 + now.minute, "daytype": "weekend" if now.weekday() >= 5 else "weekday",
-             "sun_elev": sun, "lux_out": lux_out, "occupied": 1 if occupied else 0, "media": 1 if media_playing else 0}
-        feats = slot_features(s, since_active_min)
-        post = m.predict(now.hour, s["daytype"], feats)
-        st_model = self.states(room)
-        zones_now = [z for z, on in (zones or {}).items() if on]
-        sid = assign_state(st_model, {**s, "zones": zones_now, "_since_active": since_active_min})
-        state = next((x for x in st_model.get("states", []) if x["id"] == sid), None)
-        return {**arbitrate(post, self.policy), "posterior": post, "features": feats,
-                "state": {k: state.get(k) for k in ("id", "name", "description", "intent", "lights", "links")} if state else None}
+        sun = ((states.get(self.settings.get("sun_entity", "sun.sun")) or {}).get("attributes") or {}).get("elevation")
+        ctx = {"minute_of_day": now.hour * 60 + now.minute, "daytype": "weekend" if now.weekday() >= 5 else "weekday",
+               "sun_elev": sun, "occupied": 1 if occupied else 0, "media": 1 if media_playing else 0,
+               "zones": [z for z, on in (zones or {}).items() if on], "_since_active": since_active_min}
+        sid = assign_state(model, ctx)
+        st = next((x for x in model["states"] if x["id"] == sid), None)
+        return {k: st.get(k) for k in ("id", "name", "description", "intent", "lights", "links")} if st else None
 
     def summary(self, room: str) -> dict[str, Any]:
         slots = self.store.load_slots(room)
         ents = self.entities(room)
-        ev = self.store.load_model(room, "intent_eval")
-        built = self.store.load_model(room, "intent_nb")
         add_since_active(slots)
         return {
             "history": self.store.history_span(),
@@ -946,15 +749,10 @@ class DataLab:
             "traceback": traceback_profile(slots),
             "lux": lux_profile(slots, self.store.load_statistics([e for e in (ents.lux_in, ents.lux_out) if e]),
                                ents.lux_in, ents.lux_out, self.tz()),
-            "intent_by_hour": intent_by_hour(slots),
             "states": self.states(room),
             "seasonal": seasonal_summary(self.store.load_seasonal(room)),
             "detail_days": self.detail_days(),
             "sleep_wake": sleep_wake_times(slots),
-            "evaluation": json.loads(ev[1]) if ev else None,
-            "model_built_at": built[0] if built else None,
-            "labels": self.store.get_intent_labels(room),
-            "policy": self.policy,
             "entities": {"lux_in": ents.lux_in, "lux_out": ents.lux_out, "sun": ents.sun,
                          "tracked": len(ents.all())},
             "status": self.status,
@@ -966,19 +764,15 @@ class DataLab:
 RANGES = {"today": (None, 5), "week": (7, 15), "month": (30, 60)}
 
 
-def series(slots: list[dict[str, Any]], start: str, end: str, bucket_minutes: int = 5,
-           model: IntentModel | None = None, policy: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
-    """Downsample the grid into buckets for charting: means for levels, 'any' for presence/TV, mode for intent.
-
-    If a model is given, also returns what the system *thinks* each bucket is (arbitrated), next to the label.
-    """
+def series(slots: list[dict[str, Any]], start: str, end: str, bucket_minutes: int = 5) -> dict[str, Any]:
+    """Downsample the grid into buckets for charting: means for levels, 'any' for presence/TV, mode for intent/state."""
     rows = [s for s in slots if start <= s["slot"] < end]
     per = max(1, bucket_minutes // SLOT_MINUTES)
     roles = sorted({r for s in rows for r in (s.get("lights") or {})})
     zones = sorted({z for s in rows for z in (s.get("zones") or [])})
     out: dict[str, Any] = {"t": [], "bucket_minutes": bucket_minutes, "lux_in": [], "lux_out": [], "sun_elev": [],
                            "light_max": [], "lights": {r: [] for r in roles}, "occupied": [], "media": [],
-                           "zones": {z: [] for z in zones}, "intent": [], "state": [], "predicted": [], "confidence": []}
+                           "zones": {z: [] for z in zones}, "intent": [], "state": []}
 
     def mean(vals: list) -> float | None:
         v = [x for x in vals if x is not None]
@@ -1003,12 +797,4 @@ def series(slots: list[dict[str, Any]], start: str, end: str, bucket_minutes: in
         out["intent"].append(labs.most_common(1)[0][0] if labs else None)
         sts = Counter(x.get("state") for x in b if x.get("state") is not None)
         out["state"].append(sts.most_common(1)[0][0] if sts else None)
-        if model is not None and model.trained_on:
-            post = model.predict_slot(b[len(b) // 2])
-            arb = arbitrate(post, policy)
-            out["predicted"].append(arb["intent"])
-            out["confidence"].append(round(arb.get("p") or 0.0, 2))
-    if not out["predicted"]:
-        out.pop("predicted")
-        out.pop("confidence")
     return out

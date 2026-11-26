@@ -39,21 +39,6 @@ bulb_lux_gain:
 
 punch_half_life_minutes: 45
 
-traits:
-  overhead: [main, glare_on_tv]
-  shoelight: [ambient, tv_accent, sleep_safe]
-  loungetv: [ambient, tv_accent, media_reactive, sleep_safe]
-  mb_desk: [desk, task]
-  kwn_desk: [desk, task]
-  kw_desk_led: [desk, onoff_only]
-
-tweaks:
-  presence_recent_minutes: 20
-  no_presence_before_sleep: true
-  avoid_auto_on_above_lux: 250
-  require_input_for_task_wake: false
-  hold_manual_until_clear: false
-
 # Standard v1 (docs/STANDARD.md): the general curve drives these lights; settings here are per light.
 # Anything not listed uses the defaults. You can also change all of this live in the Luxie tab.
 standard:

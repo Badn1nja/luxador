@@ -75,33 +75,6 @@ def test_sleep_wake_predictions(slots):
     assert sw["sleep"]["weekday"]["median"] == "23:15"
 
 
-def test_model_beats_time_only_baseline_and_reads_night(slots):
-    ev = d.evaluate(slots)
-    assert ev["enough_data"] and ev["accuracy"] >= ev["baseline_time_only"]
-    m = d.IntentModel().fit(slots)
-    night = m.predict(3, "weekday", {"sun": "night", "occupied": "0", "media": "0", "since_active": "<6h", "lux_out": "na"})
-    assert next(iter(night)) == "sleep"
-    rt = d.IntentModel.from_json(m.to_json())
-    assert rt.predict(3, "weekday", {"sun": "night"}) == m.predict(3, "weekday", {"sun": "night"})
-
-
-def test_arbitration_layers_intents():
-    pol = d.DEFAULT_INTENT_POLICY
-    assert d.arbitrate({"evening": 0.54, "wake": 0.46}, pol)["intent"] == "wake"  # the day starting wins
-    assert d.arbitrate({"sleep": 0.62, "nightlight": 0.38}, pol)["intent"] == "sleep"
-    assert d.arbitrate({"nightlight": 0.5, "sleep": 0.5}, pol)["intent"] == "nightlight"  # sleep below its 60 %
-    assert d.arbitrate({"day": 0.2, "away": 0.2, "evening": 0.25}, pol)["intent"] == "evening"  # fallback: most probable
-
-
-def test_user_labels_override_rules(slots):
-    import copy
-
-    s2 = copy.deepcopy(slots)
-    d.label_slots(s2, [{"start": "2026-11-24T21:00", "end": "2026-11-24T22:00", "intent": "sleep"}])
-    by = {s["slot"]: s for s in s2}
-    assert by["2026-11-24T21:30"]["intent"] == "sleep" and by["2026-11-24T21:30"]["intent_source"] == "user"
-
-
 def test_traceback_and_series_cover_the_drop(slots):
     tb = d.traceback_profile(slots)
     tue = tb["heatmap_weekday_hour"][1]
@@ -129,7 +102,7 @@ def test_datalab_end_to_end_through_api(tmp_path, monkeypatch):
 
     cfg_dst = tmp_path / "config"
     (cfg_dst / "rooms").mkdir(parents=True)
-    for f in ("settings.yaml", "schemas.yaml", "intents.yaml"):
+    for f in ("settings.yaml", "schemas.yaml"):
         (cfg_dst / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "rooms" / "lounge.yaml").write_text((CFG / "rooms" / "lounge.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg_dst)
@@ -143,15 +116,10 @@ def test_datalab_end_to_end_through_api(tmp_path, monkeypatch):
         assert cov["slots"] > 3000
         summ = client.get("/api/datalab/lounge").json()
         assert summ["sleep_wake"]["wake"]["weekday"]["median"] == "07:00"
-        assert summ["evaluation"]["enough_data"]
-        assert "live_intent" in summ
+        assert "evaluation" not in summ and "live_state" in summ
         ser = client.get("/api/datalab/lounge/series", params={"range": "week", "end": "2026-11-26T12:00"}).json()
         assert ser["bucket_minutes"] == 15 and ser["t"]
-        bad = client.post("/api/datalab/lounge/labels", json={"start": "2026-11-24T21:00", "end": "2026-11-24T22:00", "intent": "party"})
-        assert bad.status_code == 400
-        ok = client.post("/api/datalab/lounge/labels", json={"start": "2026-11-24T21:00", "end": "2026-11-24T22:00", "intent": "sleep"})
-        assert ok.status_code == 200
-        assert any(l["source"] == "user" for l in ok.json()["labels"])
+        assert "predicted" not in ser and ser["state"]
         # live capture is thinned for chatty numeric sensors
         now = datetime.now(timezone.utc)
         for k in range(5):

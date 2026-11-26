@@ -1,57 +1,39 @@
-"""API tests for the Overview -> Room [Presence | Targets | Time | Tweaks] framework."""
+"""API basics: honest when Home Assistant isn't connected, and dead endpoints stay dead."""
 
 from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from luxador import main as lux_main
 
+CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
 
-def test_overview_and_rule_tweaks_roundtrip(tmp_path, monkeypatch):
-    # Copy config into tmp_path so tests don't mutate repo YAML files
-    cfg_dst = tmp_path / "config"
-    cfg_dst.mkdir()
-    (cfg_dst / "rooms").mkdir()
-    src_cfg = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
-    (cfg_dst / "settings.yaml").write_text((src_cfg / "settings.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-    (cfg_dst / "schemas.yaml").write_text((src_cfg / "schemas.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-    (cfg_dst / "rooms" / "lounge.yaml").write_text(
-        (src_cfg / "rooms" / "lounge.yaml").read_text(encoding="utf-8"), encoding="utf-8"
-    )
 
-    monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg_dst)
+def _client(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    (cfg / "rooms").mkdir(parents=True)
+    for f in ("settings.yaml", "schemas.yaml", "rooms/lounge.yaml"):
+        (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
     monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "luxie.db"))
+    return TestClient(lux_main.app)
 
-    with TestClient(lux_main.app) as client:
-        ov = client.get("/api/overview")
-        assert ov.status_code == 200
-        ov_data = ov.json()
-        assert ov_data["rooms"][0]["room"] == "lounge"
-        assert ov_data["rooms"][0]["ambient_lux"] == 439.0
 
+def test_not_connected_shows_nothing_made_up(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        ov = client.get("/api/overview").json()
+        room = ov["rooms"][0]
+        assert room["room"] == "lounge" and ov["ha_connected"] is False
+        assert room["ambient_lux"] == 0 and room["occupied"] is False  # no 439-lux snapshot
+        assert any("Not connected" in w for w in room["warnings"])
         st = client.get("/api/rooms/lounge/state").json()
-        assert st["room_config"]["tweaks"]["presence_recent_minutes"] == 20
-        assert "main" in st["room_config"]["traits"]["overhead"]
+        assert all(not r["on"] for r in st["evaluation"]["roles"].values())  # nothing known, nothing on
+        assert "traits" not in st["room_config"] and "tweaks" not in st["room_config"]
 
-        # Add and remove a curve rule
-        add_res = client.post(
-            "/api/rooms/lounge/rules/add",
-            json={"rule": "shoelight :: 18:00-22:00 :: 45% :: no_blue"},
-        )
-        assert add_res.status_code == 200
-        rules_after_add = add_res.json()["rules"]
-        assert "shoelight :: 18:00-22:00 :: 45% :: no_blue" in rules_after_add
 
-        rm_res = client.post(
-            "/api/rooms/lounge/rules/remove",
-            json={"index": len(rules_after_add) - 1},
-        )
-        assert rm_res.status_code == 200
-        assert len(rm_res.json()["rules"]) == len(rules_after_add) - 1
-
-        # Update guardrail tweaks
-        tw_res = client.post(
-            "/api/rooms/lounge/tweaks",
-            json={"punch_half_life_minutes": 60, "tweaks": {"presence_recent_minutes": 30}},
-        )
-        assert tw_res.status_code == 200
-        assert tw_res.json()["tweaks"]["presence_recent_minutes"] == 30
+def test_removed_endpoints_are_gone(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        for path in ("/api/rooms/lounge/tweaks", "/api/rooms/lounge/simulate-day", "/api/luxie/lounge/rollup",
+                     "/api/rooms/lounge/rules/add", "/api/datalab/lounge/labels"):
+            assert client.post(path, json={}).status_code in (404, 405), path
+        assert client.get("/api/learn/lounge/weekly").status_code == 404

@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from .datalab import DEFAULT_INTENT_POLICY, RANGES, DataLab
+from .datalab import RANGES, DataLab
 from .resolver import standard_darkness
 from .seasonal import sun_elevation
 from .standard import (
@@ -45,7 +45,7 @@ from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSp
 from .opnsense import OpnsensePoller
 from .parser import load_config_bundle, load_room_yaml, load_schemas_yaml
 from .presence import PresenceSnapshot, PresenceTracker
-from .resolver import evaluate_overlay_condition, resolve_room, simulate_day
+from .resolver import evaluate_overlay_condition, resolve_room
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("luxador.main")
@@ -84,20 +84,6 @@ def _ha_options() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Could not read %s: %s", HA_OPTIONS_PATH, exc)
         return {}
-
-
-def _load_intent_policy() -> dict[str, dict[str, float]]:
-    """config/intents.yaml: priority + min_confidence per intent (defaults if the file is missing)."""
-    path = CONFIG_DIR / "intents.yaml"
-    if not path.exists():
-        return DEFAULT_INTENT_POLICY
-    try:
-        data = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("intents") or {}
-        return {k: {"priority": float(v.get("priority", 0)), "min_confidence": float(v.get("min_confidence", 0.5))}
-                for k, v in data.items()}
-    except Exception as exc:
-        logger.warning("Bad intents.yaml (%s); using defaults", exc)
-        return DEFAULT_INTENT_POLICY
 
 
 def _load_settings() -> dict[str, Any]:
@@ -165,7 +151,6 @@ class EngineRuntime:
         self.presence = PresenceTracker(settle_seconds=self.settings["presence_settle_seconds"])
         self.presence_snap: dict[str, PresenceSnapshot] = {}
         self.last_rollup: datetime | None = None
-        self.light_sample_last: dict[tuple[str, str], tuple[tuple, datetime]] = {}
         # Minute-grid accumulators for device <-> zone correlation
         self._pres_minute: dict[str, tuple[str, dict[str, bool]]] = {}
         self._net_minute: tuple[str, dict[str, tuple[str, float]]] | None = None
@@ -177,34 +162,17 @@ class EngineRuntime:
             on_external_light_change=self._handle_external_light_change,
             on_state_change=lambda e, st: self.datalab.capture(e, st),
         )
-        self.datalab = DataLab(self.luxie, self.rooms, self.settings, self.bridge, policy=_load_intent_policy())
+        self.datalab = DataLab(self.luxie, self.rooms, self.settings, self.bridge)
         self.last_active_at: dict[str, datetime] = {}
+        self._live_state_cache: dict[str, dict[str, Any] | None] = {}
         self.last_datalab_rebuild: datetime | None = None
-        self.last_raw_tick: dict[str, datetime] = {}
         self.darkness_ema: dict[str, tuple[float, datetime]] = {}
         self.on_dates: dict[tuple[str, str], str] = {}
         self.last_vacuum: datetime | None = None
-        # SANDBOX ONLY: a static snapshot of the Lounge entities captured once, so the UI has something to
-        # show without HA. It is labelled as sandbox data everywhere and never written to the presence tables.
+        # Not connected to Home Assistant: inputs are "nothing known" (empty room, no lux), never made-up numbers.
+        # Tests and development can still post inputs to /api/rooms/{room}/inputs.
         for rname, rcfg in self.rooms.items():
-            self.sim_overrides[rname] = RoomInputs(
-                occupied=True,
-                ambient_lux=439.0,
-                media_state="off",
-                bedtime=False,
-                zones={z: False for z in rcfg.presence.zones},
-                entity_states={
-                    "light.living_room_threelight_l": {"state": "on", "attributes": {"brightness": 255, "color_temp_kelvin": 4000}},
-                    "light.living_room_threelight_m": {"state": "on", "attributes": {"brightness": 255, "color_temp_kelvin": 4000}},
-                    "light.living_room_threelight_t": {"state": "on", "attributes": {"brightness": 255, "color_temp_kelvin": 4000}},
-                    "light.shoelight_light": {"state": "on", "attributes": {"brightness": 254, "color_temp_kelvin": 4000}},
-                    "light.loungetv": {"state": "off", "attributes": {}},
-                    "light.wled_strip": {"state": "off", "attributes": {}},
-                    "light.kwn_desk": {"state": "unavailable", "attributes": {}},
-                    "light.tz3000_46t1rvdu_ts0001": {"state": "off", "attributes": {}},
-                },
-                idle_minutes=0.0,
-            )
+            self.sim_overrides[rname] = RoomInputs(occupied=False, ambient_lux=0.0, zones={z: False for z in rcfg.presence.zones})
 
     def _handle_external_light_change(
         self, entity_id: str, old_bri: int, new_bri: int, kind: str, actor: str, ctx_id: str = ""
@@ -236,7 +204,6 @@ class EngineRuntime:
     def reload(self) -> None:
         self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
         self.datalab.rooms = self.rooms
-        self.datalab.policy = _load_intent_policy()
 
     def _track_activity(self, room_name: str, inputs: dict[str, Any], ev: dict[str, Any], now: datetime) -> None:
         lights_on = any(
@@ -334,20 +301,25 @@ class EngineRuntime:
         return DEFAULT_TRANSITION_S
 
     def current_pins(self, room_name: str) -> dict[str, dict[str, Any]]:
-        """Switchboard links for the state the room is in right now."""
-        try:
-            st = (self.live_intent(room_name) or {}).get("state") or {}
-        except Exception:
-            return {}
-        return st.get("links") or {}
+        """Switchboard pins for the learned pattern the room is in right now."""
+        return (self.live_state(room_name) or {}).get("links") or {}
 
-    def live_intent(self, room_name: str, now: datetime | None = None) -> dict[str, Any]:
-        now = now or datetime.now()
-        inp = self.current_inputs(room_name)
+    def live_state(self, room_name: str) -> dict[str, Any] | None:
+        """The learned pattern (discovered state) the room is in right now, or None."""
+        if room_name not in self._live_state_cache:
+            self._current_inputs(room_name)
+        return self._live_state_cache.get(room_name)
+
+    def _compute_live_state(self, room_name: str, occupied: bool, media: str, zones: dict[str, bool]) -> dict[str, Any] | None:
         last = self.last_active_at.get(room_name)
-        since = (now - last).total_seconds() / 60.0 if last else None
-        return self.datalab.live_intent(room_name, inp.occupied, inp.media_state in ("playing", "buffering"), since,
-                                        zones=inp.zones)
+        since = (datetime.now() - last).total_seconds() / 60.0 if last else None
+        try:
+            st = self.datalab.live_state(room_name, occupied, media in ("playing", "buffering"), zones, since)
+        except Exception as exc:  # a broken learned model must never stop the lights
+            logger.warning("live state failed for %s: %s", room_name, exc)
+            st = None
+        self._live_state_cache[room_name] = st
+        return st
 
     @property
     def live(self) -> bool:
@@ -423,9 +395,6 @@ class EngineRuntime:
             for sig in upd.signal_changes:
                 self.luxie.record_signal_event(room_name, sig.scope, sig.name, sig.source, sig.active,
                                                sig.available, sig.value, ts=now)
-            if upd.closed_episode:
-                sig_s, start, end = upd.closed_episode
-                self.luxie.record_episode(room_name, sig_s, start, end)
             self._accumulate_minutes(room_name, upd.snapshot, now)
         self.presence_snap[room_name] = upd.snapshot
         return upd.snapshot
@@ -441,20 +410,19 @@ class EngineRuntime:
         snap = self.presence_snap.get(room_name)
         if snap is None:
             snap = self.update_presence(room_name, datetime.now())
-        learned, match = self.luxie.resolve_state(room_name, snap.signature)
-        if learned == "empty" and snap.occupied:
-            learned, match = None, None  # someone just arrived; the 'empty' pattern is still settling out
         zones = {z: zs.occupied for z, zs in snap.zones.items()}
 
         if not self.live:
             sim = self.sim_overrides.get(room_name, RoomInputs())
+            zmap = {**zones, **sim.zones}
+            st = self._compute_live_state(room_name, sim.occupied, sim.media_state, zmap)
             return sim.model_copy(update={
-                "zones": {**zones, **sim.zones},
+                "zones": zmap,
                 "signature": snap.signature,
-                "learned_state": learned,
-                "learned_match": match,
+                "learned_state": (st or {}).get("intent"),
+                "state_name": (st or {}).get("name"),
                 "lux_source": "sandbox",
-                "warnings": ["SANDBOX: Home Assistant not connected; inputs are a static snapshot / your test values"],
+                "warnings": ["Not connected to Home Assistant: nothing is being read or controlled."],
             })
 
         states = self.bridge.states
@@ -464,14 +432,15 @@ class EngineRuntime:
         try:
             lux = float(lux_raw)
         except (TypeError, ValueError):
-            lux = 120.0
-            lux_source = "fallback"
-            warnings.append(f"Lux sensor {rcfg.lux_sensor} is {lux_raw!r}; using fallback 120 lux (target_lux is guessing)")
+            lux = 0.0
+            lux_source = "unavailable"
+            warnings.append(f"Lux sensor {rcfg.lux_sensor or '(none)'} is {lux_raw!r}: darkness comes from the sun instead")
         media = states.get(rcfg.media_sensor or "", {}).get("state", "off")
         bedtime = bool(rcfg.bedtime_entity) and states.get(rcfg.bedtime_entity or "", {}).get("state") == "on"
         unavailable = [s.key for s in snap.signals if not s.available]
         if unavailable:
             warnings.append(f"Signals unavailable: {', '.join(unavailable)}")
+        st = self._compute_live_state(room_name, snap.occupied, media, zones)
         return RoomInputs(
             occupied=snap.occupied,
             ambient_lux=lux,
@@ -481,8 +450,8 @@ class EngineRuntime:
             entity_states=states,
             idle_minutes=snap.idle_minutes,
             signature=snap.signature,
-            learned_state=learned,
-            learned_match=match,
+            learned_state=(st or {}).get("intent"),
+            state_name=(st or {}).get("name"),
             lux_source=lux_source,
             warnings=warnings,
         )
@@ -512,13 +481,7 @@ class EngineRuntime:
             raise KeyError(room_name)
         now = now or datetime.now()
         rcfg = self.rooms[room_name]
-        # Merge learned empirical lux gains into room copy if present
-        learned_gains = self.luxie.get_bulb_lux_gains(room_name)
-        if learned_gains:
-            rcfg = rcfg.model_copy(update={"bulb_lux_gain": {**rcfg.bulb_lux_gain, **learned_gains}})
-
         inputs = self.current_inputs(room_name)
-        learned_offsets = self.luxie.get_learned_offsets(room_name)
         weights = self.overlay_weights.get(room_name)
         ev = resolve_room(
             rcfg,
@@ -526,18 +489,15 @@ class EngineRuntime:
             inputs,
             now,
             punches=self.punches.get(room_name),
-            learned_offsets=learned_offsets,
             mode_entered_at=self.mode_entered_at.get(room_name),
             overlay_weights=weights,
             seasonal=self.seasonal_now(now),
             house=self.house_model(),
             pins=self.current_pins(room_name),
         )
-        drift = self.luxie.check_lux_drift(room_name, inputs.ambient_lux, now)
         return {
             "evaluation": ev.model_dump(mode="json"),
             "inputs": inputs.model_dump(mode="json"),
-            "lux_drift": drift,
             "dry_run": self.bridge.dry_run,
             "ha_connected": self.bridge.connected,
             "overlay_weights": {k: round(v, 2) for k, v in (weights or {}).items()},
@@ -549,8 +509,6 @@ class EngineRuntime:
                 "bedtime_entity": rcfg.bedtime_entity,
                 "lux_sensor": rcfg.lux_sensor,
                 "media_sensor": rcfg.media_sensor,
-                "traits": rcfg.traits,
-                "tweaks": rcfg.tweaks,
                 "bulb_lux_gain": rcfg.bulb_lux_gain,
                 "punch_half_life_minutes": rcfg.punch_half_life_minutes,
                 "rules": [r.raw for r in rcfg.rules],
@@ -582,7 +540,6 @@ class EngineRuntime:
         ev_before = self.evaluate_room(room_name, now=now)["evaluation"]
         role_before = ev_before["roles"].get(role)
         from_bri = role_before["brightness_pct"] if role_before else 0
-        bucket_key = role_before["breakdown"]["bucket_key"] if role_before else "default"
 
         existing = self.punches.setdefault(room_name, {}).get(role)
         # Accumulate on top of active punch if any
@@ -595,7 +552,6 @@ class EngineRuntime:
             actor=actor,
         )
 
-        learn_info = self.luxie.record_user_punch(room_name, role, bucket_key, delta_pct)
         ev_after = self.evaluate_room(room_name, now=now)["evaluation"]
         role_after = ev_after["roles"].get(role)
         to_bri = role_after["brightness_pct"] if role_after else from_bri
@@ -606,38 +562,11 @@ class EngineRuntime:
             from_bri=from_bri,
             to_bri=to_bri,
             actor=actor,
-            reason=f"User punched {delta_pct:+.0f}% (punching-bag active; overrides in bucket={learn_info['override_count']})",
+            reason=f"Manual change {delta_pct:+.0f}% (decays over {rcfg.punch_half_life_minutes:.0f} min)",
             breakdown=role_after["breakdown"] if role_after else {},
             ts=now,
         )
-        return {"before": from_bri, "after": to_bri, "learning": learn_info}
-
-    def _sample_lights(self, room_name: str, inputs: dict[str, Any], ev: dict[str, Any], now: datetime) -> None:
-        """Record what each role's bulbs actually are, on change or every 5 minutes (Phase 3 training data)."""
-        rcfg = self.rooms[room_name]
-        for role, entities in rcfg.bulbs.items():
-            on, bri, kelvin, rgb = False, None, None, None
-            for e in entities:
-                st = self.bridge.states.get(e, {})
-                if st.get("state") != "on":
-                    continue
-                attrs = st.get("attributes") or {}
-                on = True
-                b = attrs.get("brightness")
-                bri = max(bri or 0, int(round(float(b) / 2.55)) if b is not None else 100)
-                kelvin = kelvin or attrs.get("color_temp_kelvin")
-                rgb = rgb or attrs.get("rgb_color")
-            fp = (on, bri, kelvin, tuple(rgb) if rgb else None, inputs.get("signature"))
-            last = self.light_sample_last.get((room_name, role))
-            if last and last[0] == fp and (now - last[1]).total_seconds() < 300:
-                continue
-            self.light_sample_last[(room_name, role)] = (fp, now)
-            target = ev["roles"].get(role, {}).get("brightness_pct")
-            punched = role in self.punches.get(room_name, {})
-            self.luxie.record_light_sample(
-                room_name, role, inputs.get("signature") or "", inputs.get("learned_state"), on, bri,
-                int(kelvin) if kelvin else None, rgb, target, inputs.get("ambient_lux"), punched, ts=now,
-            )
+        return {"before": from_bri, "after": to_bri}
 
     async def tick_once(self) -> None:
         now = datetime.now()
@@ -656,25 +585,7 @@ class EngineRuntime:
                 self.mode_key[rname] = key
                 self.mode_entered_at[rname] = now
 
-            last_raw = self.last_raw_tick.get(rname)
-            if self.live and (last_raw is None or (now - last_raw).total_seconds() >= 300):
-                # sandbox ticks are not telemetry; and one row per 5 min is plenty (was every tick = 5 s)
-                self.last_raw_tick[rname] = now
-                self.luxie.record_raw_tick(
-                    room=rname,
-                    ambient_lux=inputs["ambient_lux"],
-                    occupied=inputs["occupied"],
-                    media_state=inputs["media_state"],
-                    inferred_state=ev["confidence"]["inferred_state"],
-                    payload={
-                        "signature": inputs.get("signature"),
-                        "learned_state": inputs.get("learned_state"),
-                        "lux_source": inputs.get("lux_source"),
-                        "overlay_weights": data.get("overlay_weights"),
-                    },
-                    ts=now,
-                )
-                self._sample_lights(rname, inputs, ev, now)
+            if self.live:
                 self._track_activity(rname, inputs, ev, now)
             cmds: list[dict[str, Any]] = []
             for role, r_dict in ev["roles"].items():
@@ -710,7 +621,6 @@ async def _background_loop() -> None:
             now = datetime.now()
             if runtime.last_rollup is None or (now - runtime.last_rollup).total_seconds() >= 3600:
                 runtime.last_rollup = now
-                runtime.luxie.run_rollup()
                 runtime.luxie.prune_minutes()
                 runtime.luxie.apply_retention({"ha_history": runtime.settings["detail_days"]})
                 if runtime.last_vacuum is None or (now - runtime.last_vacuum).total_seconds() >= 7 * 86400:
@@ -752,30 +662,8 @@ class PunchRequest(BaseModel):
     actor: str = "manual_ui"
 
 
-class SimulateDayRequest(BaseModel):
-    ambient_lux: float | None = None
-    tv_on: str | None = "19:30"
-    tv_off: str | None = "22:30"
-    desk_active: bool = False
-    punch_role: str | None = None
-    punch_delta: float = 0.0
-    punch_time: str = "20:15"
-
-
 class YamlSaveRequest(BaseModel):
     content: str
-
-
-class ConfirmStateRequest(BaseModel):
-    suggested_state: str
-    user_label: str
-    confidence: float
-
-
-class PatternLabelRequest(BaseModel):
-    signature: str
-    label: str | None = None
-    ignored: bool = False
 
 
 class DeviceDecisionRequest(BaseModel):
@@ -788,12 +676,6 @@ class DeviceDecisionRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     days: int = 10
-
-
-class IntentLabelRequest(BaseModel):
-    start: str  # local "YYYY-MM-DDTHH:MM"
-    end: str
-    intent: str
 
 
 class StateNameRequest(BaseModel):
@@ -829,23 +711,6 @@ class LinkRequest(BaseModel):
     locked: bool | None = None
 
 
-class OffsetActionRequest(BaseModel):
-    role: str
-    bucket_key: str
-    frozen: bool | None = None
-
-
-class RuleMutationRequest(BaseModel):
-    rule: str | None = None
-    index: int | None = None
-
-
-class TweaksUpdateRequest(BaseModel):
-    punch_half_life_minutes: float | None = None
-    clear_delay_seconds: int | None = None
-    tweaks: dict[str, Any] = {}
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
     html_path = WEB_DIR / "index.html"
@@ -875,7 +740,6 @@ async def get_overview() -> dict[str, Any]:
             "warnings": inp.get("warnings", []),
             "active_roles": active_roles,
             "total_roles": len(ev["roles"]),
-            "lux_drift": st["lux_drift"],
         })
     return {
         "house": {
@@ -932,29 +796,6 @@ async def punch_role(room_name: str, req: PunchRequest) -> dict[str, Any]:
     return runtime.apply_punch(room_name, req.role, req.delta_pct, actor=req.actor)
 
 
-@app.post("/api/rooms/{room_name}/simulate-day")
-async def simulate_room_day(room_name: str, req: SimulateDayRequest) -> dict[str, Any]:
-    assert runtime is not None
-    if room_name not in runtime.rooms:
-        raise HTTPException(404, f"Unknown room: {room_name}")
-    rcfg = runtime.rooms[room_name]
-    learned = runtime.luxie.get_learned_offsets(room_name)
-    points = simulate_day(
-        rcfg,
-        runtime.schemas,
-        datetime.now(),
-        ambient_lux_override=req.ambient_lux,
-        tv_on_hhmm=req.tv_on,
-        tv_off_hhmm=req.tv_off,
-        desk_active=req.desk_active,
-        punch_role=req.punch_role,
-        punch_delta=req.punch_delta,
-        punch_hhmm=req.punch_time,
-        learned_offsets=learned,
-    )
-    return {"room": room_name, "roles": list(rcfg.bulbs.keys()), "points": points}
-
-
 @app.get("/api/yaml/room/{room_name}")
 async def get_room_yaml(room_name: str) -> dict[str, str]:
     path = CONFIG_DIR / "rooms" / f"{room_name}.yaml"
@@ -997,42 +838,7 @@ async def save_schemas_yaml(req: YamlSaveRequest) -> dict[str, Any]:
 @app.get("/api/luxie/{room_name}/logs")
 async def get_luxie_logs(room_name: str, limit: int = 50) -> dict[str, Any]:
     assert runtime is not None
-    return {
-        "causal_logs": runtime.luxie.get_causal_logs(room_name, limit=limit),
-        "offsets": runtime.luxie.list_baseline_offsets(room_name),
-        "confirmations": runtime.luxie.get_confirmations(room_name),
-        "telemetry": runtime.luxie.get_telemetry_summary(room_name),
-    }
-
-
-@app.post("/api/luxie/{room_name}/confirm")
-async def confirm_room_state(room_name: str, req: ConfirmStateRequest) -> dict[str, Any]:
-    assert runtime is not None
-    runtime.luxie.record_confirmation(room_name, req.suggested_state, req.user_label, req.confidence)
-    if req.user_label == "Sleeping" and room_name in runtime.sim_overrides:
-        runtime.sim_overrides[room_name].bedtime = True
-    return {"ok": True}
-
-
-@app.post("/api/luxie/{room_name}/rollup")
-async def trigger_luxie_rollup(room_name: str) -> dict[str, Any]:
-    assert runtime is not None
-    stats = runtime.luxie.run_rollup()
-    return {"ok": True, "stats": stats}
-
-
-@app.post("/api/luxie/{room_name}/offset/reset")
-async def reset_luxie_offset(room_name: str, req: OffsetActionRequest) -> dict[str, Any]:
-    assert runtime is not None
-    runtime.luxie.reset_offset(room_name, req.role, req.bucket_key)
-    return {"ok": True}
-
-
-@app.post("/api/luxie/{room_name}/offset/freeze")
-async def freeze_luxie_offset(room_name: str, req: OffsetActionRequest) -> dict[str, Any]:
-    assert runtime is not None
-    runtime.luxie.set_offset_frozen(room_name, req.role, req.bucket_key, bool(req.frozen))
-    return {"ok": True}
+    return {"causal_logs": runtime.luxie.get_causal_logs(room_name, limit=limit)}
 
 
 @app.get("/api/presence/{room_name}")
@@ -1041,40 +847,18 @@ async def get_presence(room_name: str) -> dict[str, Any]:
     if room_name not in runtime.rooms:
         raise HTTPException(404, f"Unknown room: {room_name}")
     snap = runtime.presence_snap.get(room_name) or runtime.update_presence(room_name, datetime.now())
-    learned, match = runtime.luxie.resolve_state(room_name, snap.signature)
     return {
         "snapshot": snap.to_dict(),
-        "learned_state": learned,
-        "learned_match": match,
         "recording": runtime.live,
-        "patterns": runtime.luxie.pattern_summary(room_name),
         "signal_health": runtime.luxie.signal_health(room_name),
         "opnsense": runtime.net.status(),
     }
-
-
-@app.post("/api/presence/{room_name}/label")
-async def label_pattern(room_name: str, req: PatternLabelRequest) -> dict[str, Any]:
-    assert runtime is not None
-    if room_name not in runtime.rooms:
-        raise HTTPException(404, f"Unknown room: {room_name}")
-    if req.signature == "":
-        raise HTTPException(400, "The empty pattern is always 'empty'")
-    runtime.luxie.set_pattern_label(room_name, req.signature, req.label, ignored=req.ignored)
-    return {"ok": True, "patterns": runtime.luxie.pattern_summary(room_name)}
 
 
 @app.get("/api/rooms/{room_name}/contested")
 async def get_contested(room_name: str, hours: float = 24.0) -> dict[str, Any]:
     assert runtime is not None
     return {"lights": runtime.luxie.contested_lights(room_name, hours=hours)}
-
-
-@app.get("/api/learn/{room_name}/weekly")
-async def get_weekly_profile(room_name: str, days: int = 7) -> dict[str, Any]:
-    """Phase 3 preview (read-only): what the last week of real light levels says, per state/role/hour."""
-    assert runtime is not None
-    return runtime.luxie.weekly_light_profile(room_name, days=days)
 
 
 @app.get("/api/learn/{room_name}/devices")
@@ -1106,12 +890,13 @@ async def decide_device(room_name: str, req: DeviceDecisionRequest) -> dict[str,
 
 @app.get("/api/datalab/{room_name}")
 async def datalab_summary(room_name: str) -> dict[str, Any]:
-    """Phase 1 · Data: coverage, light traceback, lux profile, intents, sleep/wake times, model quality."""
+    """Phase 1 · Data: coverage, light traceback, lux profile, sleep/wake times, learned patterns."""
     assert runtime is not None
     if room_name not in runtime.rooms:
         raise HTTPException(404, f"Unknown room: {room_name}")
     out = runtime.datalab.summary(room_name)
-    out["live_intent"] = runtime.live_intent(room_name)
+    runtime.current_inputs(room_name)
+    out["live_state"] = runtime.live_state(room_name)
     out["ha_connected"] = runtime.bridge.connected
     return out
 
@@ -1129,8 +914,7 @@ async def datalab_series(room_name: str, range: str = "today", end: str | None =
     start_dt = end_dt.replace(hour=0, minute=0) if days is None else end_dt - timedelta(days=days)
     slots = runtime.luxie.load_slots(room_name)
     d_add_since_active(slots)
-    out = d_series(slots, start_dt.strftime("%Y-%m-%dT%H:%M"), end_dt.strftime("%Y-%m-%dT%H:%M"), bucket,
-                   model=runtime.datalab.model(room_name), policy=runtime.datalab.policy)
+    out = d_series(slots, start_dt.strftime("%Y-%m-%dT%H:%M"), end_dt.strftime("%Y-%m-%dT%H:%M"), bucket)
     out.update({"range": range, "start": start_dt.isoformat(timespec="minutes"), "end": end_dt.isoformat(timespec="minutes")})
     return out
 
@@ -1173,7 +957,8 @@ async def switchboard_states(room_name: str) -> dict[str, Any]:
     _room_or_404(room_name)
     out = runtime.datalab.states(room_name)
     out["roles"] = list(runtime.rooms[room_name].bulbs)
-    out["live"] = runtime.live_intent(room_name).get("state")
+    runtime.current_inputs(room_name)
+    out["live"] = runtime.live_state(room_name)
     return out
 
 
@@ -1361,6 +1146,21 @@ async def seasonal_tune(req: SeasonalTuneRequest) -> dict[str, Any]:
     return out
 
 
+@app.get("/api/datalab/{room_name}/together")
+async def datalab_together(room_name: str) -> dict[str, Any]:
+    """What goes together: per signal, what's usually true with it, its usual times, and how likely it is now."""
+    _room_or_404(room_name)
+    from .together import analyse
+
+    slots = runtime.luxie.load_slots(room_name)
+    net: dict[str, dict] = {}
+    for row in runtime.luxie._conn.execute("SELECT minute, host, hostname, kbps FROM net_minutes").fetchall():
+        e = net.setdefault(row["host"], {"label": row["hostname"] or row["host"], "minutes": {}})
+        e["minutes"][row["minute"]] = row["kbps"]
+    return analyse(slots, net or None, now=datetime.now(runtime.datalab.tz()).replace(tzinfo=None),
+                   net_active_kbps=runtime.settings["net_active_kbps"])
+
+
 @app.post("/api/datalab/import")
 async def datalab_import(req: ImportRequest) -> dict[str, Any]:
     """Pull recorder history (+ long-term lux statistics) from HA, then rebuild every room's grid and model."""
@@ -1378,27 +1178,6 @@ async def datalab_rebuild(room_name: str) -> dict[str, Any]:
     assert runtime is not None
     if room_name not in runtime.rooms:
         raise HTTPException(404, f"Unknown room: {room_name}")
-    return runtime.datalab.rebuild(room_name)
-
-
-@app.post("/api/datalab/{room_name}/labels")
-async def datalab_add_label(room_name: str, req: IntentLabelRequest) -> dict[str, Any]:
-    assert runtime is not None
-    if room_name not in runtime.rooms:
-        raise HTTPException(404, f"Unknown room: {room_name}")
-    intent = req.intent.strip().lower()
-    if intent not in runtime.datalab.policy:
-        raise HTTPException(400, f"Unknown intent {intent!r}; known: {', '.join(runtime.datalab.policy)}")
-    if not req.start < req.end:
-        raise HTTPException(400, "start must be before end")
-    runtime.luxie.add_intent_label(room_name, req.start[:16], req.end[:16], intent)
-    return runtime.datalab.rebuild(room_name)
-
-
-@app.delete("/api/datalab/{room_name}/labels/{label_id}")
-async def datalab_delete_label(room_name: str, label_id: int) -> dict[str, Any]:
-    assert runtime is not None
-    runtime.luxie.delete_intent_label(room_name, label_id)
     return runtime.datalab.rebuild(room_name)
 
 
@@ -1432,64 +1211,6 @@ async def get_net_hosts() -> dict[str, Any]:
     assert runtime is not None
     hosts = sorted(runtime.net.hosts, key=lambda h: -h.kbps)
     return {"status": runtime.net.status(), "hosts": [h.to_dict() for h in hosts]}
-
-
-def _update_room_yaml_dict(room_name: str, mutator) -> RoomConfig:
-    path = CONFIG_DIR / "rooms" / f"{room_name}.yaml"
-    if not path.exists():
-        raise HTTPException(404, f"Room YAML not found: {room_name}")
-    raw_text = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(raw_text) or {}
-    mutator(data)
-    updated_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
-    parsed = load_room_yaml(updated_text)
-    path.write_text(updated_text, encoding="utf-8")
-    assert runtime is not None
-    runtime.reload()
-    return parsed
-
-
-@app.post("/api/rooms/{room_name}/rules/add")
-async def add_room_rule(room_name: str, req: RuleMutationRequest) -> dict[str, Any]:
-    if not req.rule or not req.rule.strip():
-        raise HTTPException(400, "Missing rule string")
-    try:
-        parsed = _update_room_yaml_dict(
-            room_name,
-            lambda d: d.setdefault("rules", []).append(req.rule.strip()),
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Invalid rule: {exc}") from exc
-    return {"ok": True, "rules": [r.raw for r in parsed.rules]}
-
-
-@app.post("/api/rooms/{room_name}/rules/remove")
-async def remove_room_rule(room_name: str, req: RuleMutationRequest) -> dict[str, Any]:
-    def _rm(d: dict[str, Any]) -> None:
-        rules = d.get("rules", [])
-        if req.index is None or not (0 <= req.index < len(rules)):
-            raise ValueError("Rule index out of range")
-        rules.pop(req.index)
-
-    try:
-        parsed = _update_room_yaml_dict(room_name, _rm)
-    except Exception as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"ok": True, "rules": [r.raw for r in parsed.rules]}
-
-
-@app.post("/api/rooms/{room_name}/tweaks")
-async def update_room_tweaks(room_name: str, req: TweaksUpdateRequest) -> dict[str, Any]:
-    def _mutate(d: dict[str, Any]) -> None:
-        if req.punch_half_life_minutes is not None:
-            d["punch_half_life_minutes"] = float(req.punch_half_life_minutes)
-        if req.clear_delay_seconds is not None:
-            d.setdefault("presence", {})["clear_delay_seconds"] = int(req.clear_delay_seconds)
-        if req.tweaks:
-            d.setdefault("tweaks", {}).update(req.tweaks)
-
-    parsed = _update_room_yaml_dict(room_name, _mutate)
-    return {"ok": True, "tweaks": parsed.tweaks, "punch_half_life_minutes": parsed.punch_half_life_minutes}
 
 
 def run() -> None:

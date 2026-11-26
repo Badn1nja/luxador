@@ -1,5 +1,5 @@
 name: El Luxador & Luxie
-version: "0.6.0"
+version: "0.7.0"
 slug: luxador
 description: Presence-learning lighting engine (room > zone states, soft overlays, one controller per light).
 url: https://github.com/Badn1nja/luxador

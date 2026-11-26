@@ -6,7 +6,7 @@ from pathlib import Path
 from luxador.elastic import compute_punch_residual, solve_target_lux_brightness
 from luxador.models import PunchState, RoomInputs
 from luxador.parser import load_config_bundle
-from luxador.resolver import resolve_room, simulate_day
+from luxador.resolver import resolve_room
 
 
 def _bundle():
@@ -85,9 +85,3 @@ def test_overlay_blends_in_instead_of_snapping():
     assert abs(b - (a + c) / 2) <= 2
     assert half.effective_time == datetime(2026, 11, 26, 19, 10)  # half the 20m warp
     assert "easing" in " ".join(half.roles["overhead"].breakdown.notes)
-
-
-def test_simulate_day_returns_96_steps():
-    schemas, rooms = _bundle()
-    pts = simulate_day(rooms["lounge"], schemas, datetime(2026, 11, 26))
-    assert len(pts) == 96

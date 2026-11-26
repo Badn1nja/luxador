@@ -32,7 +32,7 @@ there is exactly one source of truth.
 | `media` | TV playing | room `media_sensor` |
 | `lights` | Per-role brightness % at slot midpoint (max of the role's bulbs; 0 = off) | room `bulbs` |
 | `light_max` | Brightest role | derived |
-| `intent`, `intent_source` | Label (see below) and where it came from: `rule` or `user` | labeller |
+| `intent`, `intent_source` | Rule label (see below) | labeller |
 
 Missing data stays missing (`NULL`), never guessed.
 
@@ -49,38 +49,27 @@ Intents describe what the house is doing, not what the lights should be:
 | `evening` | Active (presence, light or TV), the sun below the horizon (or after 18:00 with no sun data), and after 14:00 or before 04:00; a dark winter morning is `day`, not evening |
 | `day` | Any other active slot |
 
-User labels (a time range plus an intent, from the UI or the API) count **5×** in training and always win
-over rule labels. The rule labels are scaffolding: the model's accuracy is first measured against them,
-so a score of "agrees with the rules" is not the same as "right". Real ground truth comes from your labels.
+Rule labels are scaffolding: they name what a learned pattern mostly is (its majority intent).
 
-## 1.4 Predictive layer
+## 1.4 Prediction: kept simple
 
-**Naive Bayes:** P(intent | features), where
+Two honest tools, no hidden model:
 
-- the prior is P(intent | hour, daytype);
-- the likelihoods are lux_in bucket, lux_out/sun bucket, occupied, TV, and minutes since last activity;
-- Laplace smoothing, user labels weighted 5×;
-- the current light level is **not** a feature (it would teach "lights on, so keep lights on").
+* **What goes together** (`together.py`): every signal as yes/no per 5 minutes. For each one: what's usually
+  true at the same time (P(B | A) and lift), its usual hours per weekday/weekend, when it typically starts
+  (each cluster separately, so a 07:00 and a 17:30 start are never averaged into 12:15), and P(on | this hour,
+  this kind of day) as the prediction for *now*. Network devices from OPNsense join as signals once connected.
+* **Learned patterns** (discovered states, below): the same grid grouped into recurring contexts, used under
+  the hood to suggest structure and to carry switchboard pins.
 
-**Arbitration** (`config/intents.yaml`): every intent has a `priority` and a `min_confidence`. Of the intents
-whose probability clears their threshold, the highest priority wins; otherwise the most probable one wins.
-Defaults: `wake 90 > sleep 80 > nightlight 60 > evening 40 > day 30 > away 20`. So sleep overrides
-nightlight, but nothing overrides the day starting.
-
-**Predictions** from the labelled history:
-
-- wake and sleep times per day, with median / p10 / p90 for weekdays and weekends;
-- light-level traceback: median brightness and on-ratio per role × hour × daytype, and per role × intent;
-- lux profile: median indoor/outdoor lux per hour (grid) and per hour × month (long-term statistics).
-
-Phase 1 is **read-only**: nothing here drives a bulb yet. Phase 2/3 will feed the arbitrated intent and the
-traceback levels into the resolver.
+Removed in v0.7: the separate intent model (naive Bayes), arbitration/`intents.yaml`, user intent labels, and
+Gemini's hardcoded "Relaxing/Working" guesses. Four answers to one question became one.
 
 ## What gets graphed (Data Lab tab)
 
+1. **What goes together** (table, see 1.4).
 1. **Light traceback heatmap:** hour × weekday, median brightness of the brightest role.
 2. **Lux by hour:** median indoor vs outdoor lux (and sun elevation).
-3. **Intent by hour:** share of slots per intent at each hour (the model's prior).
 4. **Wake / sleep times:** one dot per day, with the median band.
 5. **Coverage:** days imported, slots, missing-data share per signal, labels per intent.
 

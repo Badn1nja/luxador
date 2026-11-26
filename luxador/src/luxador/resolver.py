@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from .elastic import (
@@ -25,7 +25,6 @@ from .models import (
 )
 from .schemas import evaluate_schema, kelvin_to_rgb, lerp_rgb
 from .standard import (
-    ROOM_ZONE,
     HouseModel,
     LightSettings,
     curve_level,
@@ -166,69 +165,11 @@ def evaluate_overlay_condition(when_expr: str, inputs: RoomInputs, now: datetime
 
 
 def compute_state_confidence(inputs: RoomInputs, now: datetime) -> StateConfidence:
-    """Estimate room intent confidence (for Luxie active-learning confirmations)."""
-    hour = now.hour + now.minute / 60.0
-    is_late = hour >= 22.0 or hour < 5.5
-    desk_active = any(v for k, v in inputs.zones.items() if "desk" in k.lower())
-
-    if inputs.media_state.lower() in ("playing", "buffering"):
-        tv_conf = 0.96
-    elif inputs.zones.get("sofa", False) and not desk_active:
-        tv_conf = 0.55
-    else:
-        tv_conf = 0.1
-
-    work_conf = 0.92 if desk_active else (0.65 if 8.5 <= hour <= 17.5 and inputs.occupied else 0.1)
-
-    sleep_score = 0.0
-    if is_late:
-        sleep_score += 0.35
-    if inputs.media_state.lower() not in ("playing", "buffering"):
-        sleep_score += 0.20
-    if inputs.idle_minutes >= 15:
-        sleep_score += 0.25
-    elif inputs.idle_minutes >= 8:
-        sleep_score += 0.12
-    if inputs.ambient_lux < 12:
-        sleep_score += 0.15
-    if desk_active:
-        sleep_score -= 0.45
-    if not inputs.occupied:
-        sleep_score += 0.10
-
-    sleep_conf = max(0.0, min(1.0, sleep_score))
-
-    source = "heuristic"
-    if inputs.bedtime or sleep_conf >= 0.90:
-        inferred = "Sleeping"
-    elif inputs.learned_state:
-        inferred = inputs.learned_state.replace("_", " ").title()
-        source = "learned" if inputs.learned_match == "exact" else "learned~"
-    elif tv_conf >= 0.85:
-        inferred = "Watching TV"
-    elif work_conf >= 0.80:
-        inferred = "Working"
-    elif inputs.occupied:
-        inferred = "Relaxing"
-    else:
-        inferred = "Empty"
-
-    needs_confirm = (0.60 <= sleep_conf < 0.90) and not inputs.bedtime and inputs.occupied
-    prompt = (
-        f"Room quiet for {int(inputs.idle_minutes)}m & TV idle ({int(sleep_conf*100)}% sure) — switch to Sleep Mode?"
-        if needs_confirm
-        else None
-    )
-
-    return StateConfidence(
-        inferred_state=inferred,
-        state_source=source,
-        sleep_confidence=round(sleep_conf, 2),
-        working_confidence=round(work_conf, 2),
-        tv_confidence=round(tv_conf, 2),
-        needs_confirmation=needs_confirm,
-        prompt_text=prompt,
-    )
+    """Name what the room is doing from its discovered state; no hardcoded guesses."""
+    if inputs.state_name or inputs.learned_state:
+        name = inputs.state_name or (inputs.learned_state or "").replace("_", " ").title()
+        return StateConfidence(inferred_state=name, state_source="state")
+    return StateConfidence(inferred_state="Occupied" if inputs.occupied else "Empty", state_source="presence")
 
 
 def blend_color(a: ColorOutput, b: ColorOutput, w: float) -> ColorOutput:
@@ -266,7 +207,6 @@ def resolve_room(
     inputs: RoomInputs,
     now: datetime,
     punches: dict[str, PunchState] | None = None,
-    learned_offsets: dict[str, float] | None = None,
     mode_entered_at: datetime | None = None,
     overlay_weights: dict[str, float] | None = None,
     seasonal: dict[str, Any] | None = None,
@@ -279,7 +219,6 @@ def resolve_room(
     `blend_minutes`). If omitted, overlays whose condition is true apply at full weight.
     """
     punches = punches or {}
-    learned_offsets = learned_offsets or {}
 
     weights: dict[str, float] = {}
     for ov in room_cfg.overlays:
@@ -455,7 +394,6 @@ def resolve_room(
 
         # 3. Apply Luxie Learned Baseline Offset + User Punching-Bag Residual
         # Only add learned/punch offsets if role is active (>0) or explicitly punched on
-        learned_offset = learned_offsets.get(f"{role}:{bucket_key}", 0.0)
         punch_residual = compute_punch_residual(punches.get(role), now)
 
         notes: list[str] = []
@@ -475,8 +413,8 @@ def resolve_room(
             final_pct = 0
             applied_learned = 0.0
         else:
-            applied_learned = learned_offset if working_pct > 0 else 0.0
-            final_pct = int(max(0, min(100, round(working_pct + applied_learned + punch_residual))))
+            applied_learned = 0.0
+            final_pct = int(max(0, min(100, round(working_pct + punch_residual))))
             if season and final_pct > 0 and season.get("boost_now_pct"):
                 boosted = int(min(100, round(final_pct * (1 + season["boost_now_pct"] / 100.0))))
                 if boosted != final_pct:
@@ -538,96 +476,3 @@ def resolve_room(
         roles=roles_out,
         confidence=confidence,
     )
-
-
-def simulate_day(
-    room_cfg: RoomConfig,
-    schemas: dict[str, dict[str, Any]],
-    date_ref: datetime,
-    ambient_lux_override: float | None = None,
-    tv_on_hhmm: str | None = "20:00",
-    tv_off_hhmm: str | None = "22:30",
-    desk_active: bool = False,
-    punch_role: str | None = None,
-    punch_delta: float = 0.0,
-    punch_hhmm: str = "20:15",
-    step_minutes: int = 15,
-    learned_offsets: dict[str, float] | None = None,
-) -> list[dict[str, Any]]:
-    """Simulate 24 hours at `step_minutes` intervals for the HTTP Curve Sandbox."""
-    day_start = date_ref.replace(hour=0, minute=0, second=0, microsecond=0)
-    tv_on_m = _hhmm_or_none(tv_on_hhmm)
-    tv_off_m = _hhmm_or_none(tv_off_hhmm)
-    punch_m = _hhmm_or_none(punch_hhmm)
-
-    points: list[dict[str, Any]] = []
-    for mins in range(0, 1440, step_minutes):
-        t = day_start + timedelta(minutes=mins)
-        # Default synthetic daylight bell curve if user didn't pin ambient lux
-        if ambient_lux_override is not None:
-            lux = ambient_lux_override
-        else:
-            if 7 <= t.hour <= 18:
-                # Peak 450 lux at 13:00
-                lux = max(10.0, 450.0 * (1.0 - abs(mins - 780) / 390.0))
-            else:
-                lux = 5.0
-
-        media_playing = False
-        if tv_on_m is not None and tv_off_m is not None:
-            media_playing, _ = time_in_window(mins, tv_on_m, tv_off_m)
-
-        punches: dict[str, PunchState] = {}
-        if punch_role and abs(punch_delta) > 0 and punch_m is not None and mins >= punch_m:
-            punches[punch_role] = PunchState(
-                role=punch_role,
-                delta_pct=punch_delta,
-                pushed_at=day_start + timedelta(minutes=punch_m),
-                half_life_minutes=room_cfg.punch_half_life_minutes,
-            )
-
-        inputs = RoomInputs(
-            occupied=True,
-            ambient_lux=round(lux, 1),
-            media_state="playing" if media_playing else "off",
-            bedtime=(mins >= 23 * 60 + 30 or mins < 6 * 60),
-            zones={z: (desk_active if "desk" in z else media_playing if "sofa" in z else False) for z in room_cfg.presence.zones},
-        )
-        mode_start = (
-            day_start + timedelta(minutes=tv_on_m)
-            if media_playing and tv_on_m is not None
-            else day_start
-        )
-        ev = resolve_room(
-            room_cfg,
-            schemas,
-            inputs,
-            t,
-            punches=punches,
-            learned_offsets=learned_offsets,
-            mode_entered_at=mode_start,
-        )
-        points.append({
-            "time": t.strftime("%H:%M"),
-            "ambient_lux": inputs.ambient_lux,
-            "overlays": ev.active_overlays,
-            "roles": {
-                r: {
-                    "on": rev.on,
-                    "brightness_pct": rev.brightness_pct,
-                    "rgb": rev.color.rgb,
-                    "kelvin": rev.color.kelvin,
-                    "stage": rev.color.stage,
-                    "rule": rev.breakdown.rule_matched,
-                }
-                for r, rev in ev.roles.items()
-            },
-        })
-    return points
-
-
-def _hhmm_or_none(val: str | None) -> int | None:
-    if not val or ":" not in val:
-        return None
-    h, m = val.strip().split(":", 1)
-    return int(h) * 60 + int(m)
