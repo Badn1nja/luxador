@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .models import RoomConfig
 from .states import assign_state, discover_states
@@ -166,8 +166,13 @@ def build_slots(
     start: datetime,
     end: datetime,
     tz: tzinfo,
+    sun_fn: Callable[[datetime], float] | None = None,
 ) -> list[dict[str, Any]]:
-    """Resample raw history into one row per 5 minutes (local time). Missing stays None."""
+    """Resample raw history into one row per 5 minutes (local time). Missing stays None.
+
+    sun_fn: sun elevation for a UTC time. HA doesn't record the sun's elevation in history, so when the home's
+    location is known Echo computes it for every slot instead (more accurate than reading it back anyway).
+    """
     series = {e: Series(rows) for e, rows in history.items() if rows}
     out = []
     t = floor_slot(start.astimezone(tz))
@@ -203,6 +208,8 @@ def build_slots(
         media = None if media_state in (None, "unavailable", "unknown") else (1 if media_state in ("playing", "buffering") else 0)
         sun_state, sun_attrs = at(ents.sun)
         sun_elev = sun_attrs.get("elevation") if sun_state is not None else None
+        if sun_fn is not None:
+            sun_elev = round(sun_fn(mid), 2)
 
         out.append({
             "slot": t.strftime("%Y-%m-%dT%H:%M"),
@@ -554,6 +561,22 @@ class DataLab:
         return self.status
 
     # ---- grid + model
+    def location(self) -> tuple[float, float] | None:
+        lat, lon = self.settings.get("latitude"), self.settings.get("longitude")
+        if lat in (None, "") or lon in (None, ""):
+            lat, lon = getattr(self.bridge, "latitude", None), getattr(self.bridge, "longitude", None)
+        if lat in (None, "") or lon in (None, ""):
+            return None
+        return float(lat), float(lon)
+
+    def sun_fn(self) -> Callable[[datetime], float] | None:
+        loc = self.location()
+        if not loc:
+            return None
+        from .seasonal import sun_elevation
+
+        return lambda t: sun_elevation(loc[0], loc[1], t)
+
     def detail_days(self) -> int:
         return int(self.settings.get("detail_days", 90) or 90)
 
@@ -577,7 +600,7 @@ class DataLab:
         start = max(parse_ts(span["first"]), window_start)
         self.fold_aged_slots(room, floor_slot(start.astimezone(self.tz())).strftime("%Y-%m-%dT%H:%M"))
         hist = self.store.load_history(ents.all(), since_iso=start.isoformat())
-        slots = build_slots(ents, hist, start, end, self.tz())
+        slots = build_slots(ents, hist, start, end, self.tz(), sun_fn=self.sun_fn())
         label_slots(slots)
         add_since_active(slots)
         state_model = discover_states(slots, int(self.settings.get("max_states", 28) or 28),

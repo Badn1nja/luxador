@@ -43,6 +43,15 @@ Every setting has a default, a range, and one place it lives.
 With no usable lux sensor, the sun decides: elevation ≥ 10° → 0, ≤ −6° → 1, linear between.
 **Curve:** `d = 0` → off; otherwise `min_pct + (max_pct − min_pct) × d^shape`.
 
+### Room · lux calibration (learned by Flint, applied with **Apply learned**)
+
+| Setting | Default | Range | Meaning |
+|---|---|---|---|
+| `lux_base` | — | 0–5000 | what the room's indoor sensor reads in the dark with every lamp off (its floor) |
+| `daylight` | — | `A` ≥ 0, `B` 0.1–5 | indoor daylight ≈ A × sin(sun)^B; used to *predict* daylight when the sensor is unavailable |
+
+The room's `lux_sensor` is **indoor** (daylight + lamps). Ambient daylight = reading − `lux_base` − Σ lamp `lux_gain` × level.
+
 ### Zone (`zones.<name>`)
 
 | Setting | Default | Range | Meaning |
@@ -64,6 +73,7 @@ With no usable lux sensor, the sun decides: elevation ≥ 10° → 0, ≤ −6°
 | `kelvin_offset` | 0 | −1000–1000 | warmer (−) / cooler (+) than the schema |
 | `soft_start` | `first_of_day` | `never` · `first_of_day` · `always` | when to fade in from off |
 | `soft_start_speed` | `normal` | `fast` 2 s · `normal` 20 s · `slow` 2 min · `sunrise` 15 min | how long that fade takes |
+| `lux_gain` | — | 0–5000 | lux this light adds at the room's sensor at 100 %; learned by Flint (Apply learned) or set by hand. Unset = the room file's `bulb_lux_gain` |
 
 ## 3. Who wins (precedence, lowest first)
 

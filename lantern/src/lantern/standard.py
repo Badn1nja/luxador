@@ -62,6 +62,7 @@ class LightSettings(Strict):
     max_pct: float = Field(100.0, ge=0, le=100)
     kelvin_offset: int = Field(0, ge=-1000, le=1000)
     soft_start: Literal["never", "first_of_day", "always"] = "first_of_day"
+    lux_gain: float | None = Field(None, ge=0, le=5000)  # lux this light adds at the room sensor at 100 % (learned or set)
     soft_start_speed: Literal["fast", "normal", "slow", "sunrise"] = "normal"
 
     @model_validator(mode="after")
@@ -69,6 +70,12 @@ class LightSettings(Strict):
         if self.max_pct < self.min_pct:
             raise ValueError("max_pct must be at least min_pct")
         return self
+
+
+class DaylightModel(Strict):
+    """Indoor daylight ≈ A × sin(sun)^B (learned by Flint from your history)."""
+    A: float = Field(ge=0, le=200000)
+    B: float = Field(1.0, ge=0.1, le=5.0)
 
 
 class ZoneSettings(Strict):
@@ -81,6 +88,8 @@ class RoomModel(Strict):
     engine: Literal["standard", "rules"] = "standard"
     zones: dict[str, ZoneSettings] = Field(default_factory=dict)
     lights: dict[str, LightSettings] = Field(default_factory=dict)
+    lux_base: float | None = Field(None, ge=0, le=5000)  # what the room's sensor reads in the dark, lamps off
+    daylight: DaylightModel | None = None  # used when the lux sensor is unavailable
 
 
 class HouseModel(Strict):

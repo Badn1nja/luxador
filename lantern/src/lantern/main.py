@@ -1080,6 +1080,53 @@ async def curve_suggest(room_name: str) -> dict[str, Any]:
     return suggest_thresholds(runtime.echo.load_slots(room_name))
 
 
+@app.get("/api/flint/{room_name}/lux")
+async def flint_lux(room_name: str) -> dict[str, Any]:
+    """Flint's lux model for a room: sensor health, what each lamp adds, daylight vs sun, and what's applied."""
+    _room_or_404(room_name)
+    from .lux import learn
+
+    cfg = runtime.rooms[room_name]
+    out = learn(runtime.echo.load_slots(room_name), list(cfg.bulbs))
+    house = runtime.house_model()
+    rm = house.rooms.get(room_name) if house else None
+    out["sensor"]["entity"] = cfg.lux_sensor
+    out["sensor"]["placement"] = "indoor"
+    out["outdoor_sensor"] = runtime.settings.get("outdoor_lux_sensor") or None
+    out["applied"] = {
+        "lux_base": rm.lux_base if rm else None,
+        "daylight": rm.daylight.model_dump() if rm and rm.daylight else None,
+        "gains": {r: (rm.lights[r].lux_gain if rm and r in rm.lights else None) for r in cfg.bulbs},
+    }
+    out["configured_gains"] = {r: cfg.bulb_lux_gain.get(r) for r in cfg.bulbs}
+    inp = runtime.current_inputs(room_name)
+    if house:
+        from .resolver import standard_darkness
+
+        d, note = standard_darkness(house, cfg, inp)
+        out["now"] = {"lux": inp.ambient_lux, "lux_source": inp.lux_source, "sun": inp.sun_elev, "darkness": round(d, 2), "note": note}
+    return out
+
+
+@app.post("/api/flint/{room_name}/lux/apply")
+async def flint_lux_apply(room_name: str) -> dict[str, Any]:
+    """Write the learned lux calibration into the house model (validated; locked values refuse)."""
+    _room_or_404(room_name)
+    from .lux import learn
+
+    cfg = runtime.rooms[room_name]
+    m = learn(runtime.echo.load_slots(room_name), list(cfg.bulbs))
+    patch: dict[str, Any] = {}
+    if m["lamps"].get("ok"):
+        patch["lux_base"] = m["lamps"]["base_lux"]
+        patch["lights"] = {r: {"lux_gain": g} for r, g in m["lamps"]["gains"].items() if g is not None}
+    if m["daylight"].get("ok"):
+        patch["daylight"] = {"A": m["daylight"]["A"], "B": m["daylight"]["B"]}
+    if not patch:
+        raise HTTPException(400, "nothing learned yet: import more history first")
+    return await house_model_patch(HousePatchRequest(patch={"rooms": {room_name: patch}}))
+
+
 @app.get("/api/rooms/{room_name}/grid")
 async def room_grid(room_name: str) -> dict[str, Any]:
     """Preview: what every light does for each darkness level x presence situation, right now."""

@@ -388,6 +388,16 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;">
+        <div class="row"><h2>Lux: what Flint sees</h2><span><button class="btn primary" onclick="luxApply()">Apply learned</button></span></div>
+        <div class="muted" style="margin-bottom:8px;">The room's sensor is <strong>indoor</strong>: it measures daylight <em>plus</em> your lamps. From night-time history Flint learns what each lamp adds (so it can subtract its own light), and from daytime history how much daylight this room gets for a given sun height (used when the sensor drops out). Learned values only take effect when you press <strong>Apply learned</strong>; each one then shows (and can be locked) in the light's settings.</div>
+        <div id="luxNow" class="breakdown" style="margin-bottom:10px;"></div>
+        <div class="std-grid" style="margin-bottom:0;">
+          <div><div id="luxLamps"></div></div>
+          <div><div class="muted"><strong>Daylight in this room vs sun height</strong> · dots: your history (lamps subtracted) · line: typical day, band: cloudy → bright</div><div id="luxChart"></div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
         <div class="row"><h2>Room › Zones › Lights</h2>
           <span><button class="btn" onclick="stdExport()">Export model</button>
           <label class="btn" style="display:inline-flex;cursor:pointer;">Import<input type="file" accept="application/json" style="display:none" onchange="stdImport(this.files[0])" /></label></span></div>
@@ -1135,6 +1145,7 @@
 
     async function loadFlint() {
       await loadHouse();
+      loadLux();
     }
 
     async function loadLuxieTab() {
@@ -1333,6 +1344,7 @@
           ${rangeCtl(p + ".min_pct", "Never below", ls.min_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
           ${rangeCtl(p + ".max_pct", "Never above", ls.max_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
           ${rangeCtl(p + ".kelvin_offset", "Colour shift", ls.kelvin_offset, -1000, 1000, 50, (v) => `${v > 0 ? "+" : ""}${Math.round(v)}K`)}
+          ${ls.lux_gain != null ? rangeCtl(p + ".lux_gain", "Adds at sensor", ls.lux_gain, 0, Math.max(500, ls.lux_gain * 2), 1, (v) => `${Math.round(v)} lx`) : ""}
           ${selectCtl(p + ".soft_start", "Soft start", ls.soft_start, ["never", "first_of_day", "always"])}
           ${selectCtl(p + ".soft_start_speed", "Fade-in", ls.soft_start_speed, ["fast", "normal", "slow", "sunrise"])}
         </div></details>`;
@@ -1547,6 +1559,72 @@
           <td>${usual(sg.usual)}</td>
           <td>${starts(sg.starts)}</td>
           <td>${sg.now_p == null ? "—" : `<strong>${Math.round(sg.now_p * 100)}%</strong>`}</td></tr>`).join("")}</tbody></table>`;
+    }
+
+
+    // ---------------------------------------------------------------- Flint: lux model
+    async function loadLux() {
+      const m = await fetch(`./api/flint/${ROOM}/lux`).then(r => r.json());
+      const sen = m.sensor || {};
+      const now = m.now || {};
+      document.getElementById("luxNow").innerHTML = `
+        <div><strong>Sensor</strong> <code>${esc(sen.entity || "none")}</code> (indoor) · missing ${sen.missing_share == null ? "—" : Math.round(sen.missing_share * 100) + "%"} of the time
+          · range ${sen.min ?? "—"}–${sen.max ?? "—"} lx (median ${sen.median ?? "—"})${sen.longest_flat_hours >= 6 ? ` · <span style="color:var(--gold)">stuck for ${sen.longest_flat_hours} h at one point</span>` : ""}
+          ${m.outdoor_sensor ? ` · outdoor: <code>${esc(m.outdoor_sensor)}</code>` : " · no outdoor sensor (the sun is computed)"}</div>
+        <div style="margin-top:4px;"><strong>Now</strong> ${now.lux_source === "sensor" ? Math.round(now.lux) + " lx" : "sensor " + esc(now.lux_source || "?")}
+          · sun ${now.sun == null ? "—" : Math.round(now.sun) + "°"} · darkness <strong>${now.darkness ?? "—"}</strong> <span class="muted">(${esc(now.note || "")})</span></div>`;
+      const L = m.lamps || {};
+      const ap = m.applied || {};
+      const rows = Object.keys(m.configured_gains || {}).map(r => {
+        const learned = L.ok ? L.gains[r] : null;
+        const grp = (L.together || []).find(t => t.lights.includes(r));
+        return `<tr><td>${esc(r)}</td><td class="muted">${m.configured_gains[r] ?? "—"}</td>
+          <td>${learned != null ? `<strong>${learned}</strong>` : grp ? `<span class="muted">with ${esc(grp.lights.filter(x => x !== r).join(", "))}</span>` : `<span class="muted">—</span>`}</td>
+          <td>${ap.gains?.[r] ?? "<span class='muted'>—</span>"}</td></tr>`;
+      }).join("");
+      document.getElementById("luxLamps").innerHTML = `
+        <table><thead><tr><th>Lamp</th><th>Configured lx</th><th>Learned lx</th><th>Applied</th></tr></thead><tbody>${rows}</tbody></table>
+        <div class="muted" style="margin-top:6px;">${L.ok
+          ? `Fitted on ${L.n} night slots (R² ${L.r2}). Sensor floor ${L.base_lux} lx.${(L.together || []).map(t => ` <span style="color:var(--gold)">${esc(t.lights.join(" + "))} always switch together, so they can only be learned as a pair (${t.combined_gain} lx combined).</span>`).join("")}${(L.not_learned || []).length ? ` Not seen on at night: ${esc(L.not_learned.join(", "))}.` : ""}${(L.no_data || []).length ? ` No data most of the time (unavailable?): ${esc(L.no_data.join(", "))}.` : ""}`
+          : esc(L.reason || "Not enough history yet.") + ((L.no_data || []).length ? ` No data most of the time: ${esc(L.no_data.join(", "))}.` : "")}</div>
+        <div class="muted" style="margin-top:4px;">${m.daylight?.ok
+          ? `Daylight ≈ ${m.daylight.A} × sin(sun)^${m.daylight.B} from ${m.daylight.n} daytime slots; cloudy days ×${m.daylight.cloudy}, bright ×${m.daylight.bright}.`
+          : esc(m.daylight?.reason || "")}${ap.daylight ? ` <strong>Applied:</strong> A ${ap.daylight.A}, B ${ap.daylight.B}.` : ""}</div>`;
+      renderLuxChart(m);
+    }
+
+    function renderLuxChart(m) {
+      const host = document.getElementById("luxChart");
+      const pts = m.scatter || [], curve = m.curve || [];
+      if (!pts.length) { host.innerHTML = `<div class="muted" style="padding:12px 0;">No daytime readings yet.</div>`; return; }
+      const W = Math.max(280, host.clientWidth), H = 200, L = 44, R = 10, T = 8, B = 24;
+      const maxLux = Math.max(10, ...pts.map(p => p.lux), ...curve.map(c => c.bright));
+      const top = Math.ceil(Math.log10(maxLux));
+      const xs = (e) => L + (Math.min(e, 62) / 62) * (W - L - R);
+      const ys = (v) => T + (1 - Math.log10(Math.max(1, v)) / top) * (H - T - B);
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Indoor daylight against sun elevation" }, host);
+      for (let k = 0; k <= top; k++) {
+        el("line", { x1: L, x2: W - R, y1: ys(10 ** k), y2: ys(10 ** k), stroke: cssv("--grid") }, svg);
+        const t = el("text", { x: L - 6, y: ys(10 ** k), "text-anchor": "end", "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, svg);
+        t.textContent = 10 ** k >= 1000 ? `${10 ** (k - 3)}k` : `${10 ** k}`;
+      }
+      [0, 15, 30, 45, 60].forEach(e => { const t = el("text", { x: xs(e), y: H - 6, "text-anchor": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = `${e}°`; });
+      pts.forEach(p => el("circle", { cx: xs(p.sun), cy: ys(p.lux), r: 2.2, fill: cssv("--s1"), opacity: 0.35 }, svg));
+      if (curve.length) {
+        const band = curve.map(c => `${xs(c.sun).toFixed(1)},${ys(c.bright).toFixed(1)}`).join(" L") + " L" +
+                     curve.slice().reverse().map(c => `${xs(c.sun).toFixed(1)},${ys(c.cloudy).toFixed(1)}`).join(" L");
+        el("path", { d: "M" + band + "Z", fill: cssv("--s2"), opacity: 0.18 }, svg);
+        el("path", { d: curve.map((c, i) => `${i ? "L" : "M"}${xs(c.sun).toFixed(1)},${ys(c.lux).toFixed(1)}`).join(""), fill: "none", stroke: cssv("--s2"), "stroke-width": 2.5 }, svg);
+      }
+    }
+
+    async function luxApply() {
+      const res = await fetch(`./api/flint/${ROOM}/lux/apply`, { method: "POST" });
+      const out = await res.json();
+      if (!res.ok) { flintSays(`Not applied: ${esc(typeof out.detail === "string" ? out.detail : (out.detail?.errors || []).join("; "))}`); return; }
+      flintSays("Applied the learned lux calibration. Each value is now in the light's settings, where you can see, change or lock it.");
+      STD.m = out; renderZones(); refreshStdLive(); loadLux();
     }
 
     initRooms().then(loadOverview);

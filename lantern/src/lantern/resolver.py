@@ -35,8 +35,14 @@ from .standard import (
 
 
 def standard_darkness(house: HouseModel, room_cfg: RoomConfig, inputs: RoomInputs) -> tuple[float, str]:
-    """Stage 2: raw darkness 0..1 and where it came from. Ambient = room lux minus what our own lights add."""
+    """Stage 2: raw darkness 0..1 and where it came from.
+
+    Ambient daylight = room lux − sensor floor − what our own lights add (each light's lux_gain, learned or set;
+    the old static bulb_lux_gain otherwise). With the sensor unavailable, Flint predicts daylight from the sun
+    using the room's learned daylight model; with no model either, the sun's height alone decides.
+    """
     curve = house.curve
+    rm = house.rooms.get(room_cfg.room)
     if curve.darkness_source == "ambient" and inputs.lux_source in ("sensor", "sandbox"):
         own = 0.0
         for role, ents in room_cfg.bulbs.items():
@@ -46,9 +52,19 @@ def standard_darkness(house: HouseModel, room_cfg: RoomConfig, inputs: RoomInput
                 if st.get("state") == "on":
                     b = (st.get("attributes") or {}).get("brightness")
                     pct = max(pct, float(b) / 2.55 if b is not None else 100.0)
-            own += room_cfg.bulb_lux_gain.get(role, 40.0) * pct / 100.0
-        ambient = max(0.0, inputs.ambient_lux - own)
-        return darkness_from_lux(ambient, curve), f"ambient {ambient:.0f} lx (room {inputs.ambient_lux:.0f} − own lights {own:.0f})"
+            ls = rm.lights.get(role) if rm else None
+            gain = ls.lux_gain if ls and ls.lux_gain is not None else room_cfg.bulb_lux_gain.get(role, 40.0)
+            own += gain * pct / 100.0
+        floor = (rm.lux_base or 0.0) if rm else 0.0
+        ambient = max(0.0, inputs.ambient_lux - floor - own)
+        return darkness_from_lux(ambient, curve), (
+            f"ambient {ambient:.0f} lx (room {inputs.ambient_lux:.0f} − own lights {own:.0f}"
+            + (f" − sensor floor {floor:.1f}" if floor else "") + ")")
+    if curve.darkness_source == "ambient" and rm and rm.daylight and inputs.sun_elev is not None:
+        from .lux import predict_daylight
+
+        day = predict_daylight(rm.daylight.model_dump(), inputs.sun_elev) or 0.0
+        return darkness_from_lux(day, curve), f"predicted daylight {day:.0f} lx from the sun at {inputs.sun_elev:.0f}° (lux sensor unavailable)"
     d = darkness_from_sun(inputs.sun_elev)
     if d is not None:
         return d, f"sun {inputs.sun_elev:.0f}°"
@@ -430,7 +446,7 @@ def resolve_room(
                               "note": ", ".join(n for n in notes if "easing" in n or "Winter" in n or "Season" in n) or "overlays"})
             if punch_residual:
                 trace.append({"stage": "manual", "out": final_pct, "note": f"manual nudge {punch_residual:+.0f}% (decaying)"})
-            if final_pct > 0:
+            if final_pct > 0 and ls.curve != "switch":
                 hi = ls.max_pct
                 if night:
                     hi = min(hi, house.curve.night_max_pct)
