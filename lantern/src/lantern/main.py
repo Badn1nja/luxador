@@ -1,4 +1,4 @@
-"""FastAPI application for El Luxador & Luxie (HTTP UI, 24h sandbox, hot-reload YAML, and telemetry)."""
+"""FastAPI application for Lantern (HTTP UI, 24h sandbox, hot-reload YAML, and telemetry)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from .datalab import add_since_active as d_add_since_active
 from .datalab import series as d_series
 from .ha_bridge import HABridge
 from .house import house_overview
-from .luxie import LuxieStore
+from .echo import EchoStore
 from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSpec
 from .opnsense import OpnsensePoller
 from .parser import load_config_bundle, load_room_yaml, load_schemas_yaml
@@ -48,7 +48,12 @@ from .presence import PresenceSnapshot, PresenceTracker
 from .resolver import evaluate_overlay_condition, resolve_room
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
-logger = logging.getLogger("luxador.main")
+logger = logging.getLogger("lantern.main")
+
+# Renamed from Luxador: the old LANTERN_* environment variables keep working.
+for _k, _v in list(os.environ.items()):
+    if _k.startswith("LANTERN_") and "LANTERN_" + _k[len("LANTERN_"):] not in os.environ:
+        os.environ["LANTERN_" + _k[len("LANTERN_"):]] = _v
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
@@ -56,9 +61,9 @@ WEB_DIR = BASE_DIR / "web"
 # Running as a Home Assistant app (add-on): Supervisor writes the Configuration-tab options here,
 # mounts the app's own config folder at /config (addon_configs/<slug> on the host) and persistent
 # storage at /data.
-HA_OPTIONS_PATH = Path(os.environ.get("LUXADOR_HA_OPTIONS", "/data/options.json"))
+HA_OPTIONS_PATH = Path(os.environ.get("LANTERN_HA_OPTIONS", "/data/options.json"))
 IS_HA_APP = HA_OPTIONS_PATH.exists()
-CONFIG_DIR = Path(os.environ.get("LUXADOR_CONFIG_DIR", "/config" if IS_HA_APP else str(BASE_DIR / "config")))
+CONFIG_DIR = Path(os.environ.get("LANTERN_CONFIG_DIR", "/config" if IS_HA_APP else str(BASE_DIR / "config")))
 DEFAULT_CONFIG_DIR = BASE_DIR / "default_config"
 
 
@@ -100,15 +105,15 @@ def _load_settings() -> dict[str, Any]:
                              ("opnsense_api_secret", "api_secret"), ("opnsense_verify_ssl", "verify_ssl")):
             if ha_opts.get(opt_key) not in (None, ""):
                 opn[key] = ha_opts[opt_key]
-    default_db = "/data/luxie.db" if IS_HA_APP else str(BASE_DIR / data.get("db_path", "data/luxie.db"))
+    default_db = "/data/lantern.db" if IS_HA_APP else str(BASE_DIR / data.get("db_path", "data/lantern.db"))
     return {
-        "ha_url": os.environ.get("LUXADOR_HA_URL", data.get("ha_url", "")),
-        "ha_token": os.environ.get("LUXADOR_HA_TOKEN", data.get("ha_token", "")),
-        "dry_run": os.environ.get("LUXADOR_DRY_RUN", str(data.get("dry_run", True))).lower() == "true",
-        "tick_seconds": int(os.environ.get("LUXADOR_TICK_SECONDS", data.get("tick_seconds", 5))),
-        "db_path": os.environ.get("LUXADOR_DB_PATH", default_db),
+        "ha_url": os.environ.get("LANTERN_HA_URL", data.get("ha_url", "")),
+        "ha_token": os.environ.get("LANTERN_HA_TOKEN", data.get("ha_token", "")),
+        "dry_run": os.environ.get("LANTERN_DRY_RUN", str(data.get("dry_run", True))).lower() == "true",
+        "tick_seconds": int(os.environ.get("LANTERN_TICK_SECONDS", data.get("tick_seconds", 5))),
+        "db_path": os.environ.get("LANTERN_DB_PATH", default_db),
         "host": data.get("host", "0.0.0.0"),
-        "port": int(os.environ.get("LUXADOR_PORT", data.get("port", 8099))),
+        "port": int(os.environ.get("LANTERN_PORT", data.get("port", 8099))),
         "presence_settle_seconds": float(data.get("presence_settle_seconds", 45)),
         "net_active_kbps": float(data.get("net_active_kbps", 20)),
         "outdoor_lux_sensor": str(data.get("outdoor_lux_sensor") or ""),
@@ -121,9 +126,9 @@ def _load_settings() -> dict[str, Any]:
         "seasonal": dict(data.get("seasonal") or {}),
         "curve": dict(data.get("curve") or {}),
         "opnsense": {
-            "url": os.environ.get("LUXADOR_OPNSENSE_URL", opn.get("url", "")),
-            "api_key": os.environ.get("LUXADOR_OPNSENSE_KEY", opn.get("api_key", "")),
-            "api_secret": os.environ.get("LUXADOR_OPNSENSE_SECRET", opn.get("api_secret", "")),
+            "url": os.environ.get("LANTERN_OPNSENSE_URL", opn.get("url", "")),
+            "api_key": os.environ.get("LANTERN_OPNSENSE_KEY", opn.get("api_key", "")),
+            "api_secret": os.environ.get("LANTERN_OPNSENSE_SECRET", opn.get("api_secret", "")),
             "verify_ssl": bool(opn.get("verify_ssl", True)),
             "interface": str(opn.get("interface", "lan")),
             "poll_seconds": float(opn.get("poll_seconds", 15)),
@@ -139,7 +144,7 @@ class EngineRuntime:
             _seed_config_dir()
         self.settings = _load_settings()
         self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
-        self.luxie = LuxieStore(self.settings["db_path"])
+        self.echo = EchoStore(self.settings["db_path"])
         self.punches: dict[str, dict[str, PunchState]] = {}
         self.sim_overrides: dict[str, RoomInputs] = {}
         self.last_commands: dict[str, list[dict[str, Any]]] = {}
@@ -162,7 +167,7 @@ class EngineRuntime:
             on_external_light_change=self._handle_external_light_change,
             on_state_change=lambda e, st: self.datalab.capture(e, st),
         )
-        self.datalab = DataLab(self.luxie, self.rooms, self.settings, self.bridge)
+        self.datalab = DataLab(self.echo, self.rooms, self.settings, self.bridge)
         self.last_active_at: dict[str, datetime] = {}
         self._live_state_cache: dict[str, dict[str, Any] | None] = {}
         self.last_datalab_rebuild: datetime | None = None
@@ -177,7 +182,7 @@ class EngineRuntime:
     def _handle_external_light_change(
         self, entity_id: str, old_bri: int, new_bri: int, kind: str, actor: str, ctx_id: str = ""
     ) -> None:
-        """Something other than Luxador changed one of our lights.
+        """Something other than Flint changed one of our lights.
 
         Always recorded as a foreign write (-> 'Contested lights'). Only a *person* (HA user, or a physical
         switch/remote, which HA can't tell apart from an integration) becomes a punch. Automations are never
@@ -189,13 +194,13 @@ class EngineRuntime:
             for role, entities in rcfg.bulbs.items():
                 if entity_id not in entities:
                     continue
-                self.luxie.record_foreign_write(entity_id, kind, actor, old_bri, new_bri, room=rname, context_id=ctx_id)
+                self.echo.record_foreign_write(entity_id, kind, actor, old_bri, new_bri, room=rname, context_id=ctx_id)
                 expected = self.last_applied_bri.get((rname, role), 0)
                 delta = float(new_bri - expected)
                 if kind == "automation" or self.bridge.dry_run:
                     why = ("dry-run: bulbs aren't ours yet, not learned" if self.bridge.dry_run
                            else "another automation is driving this light; not learned, disable it for this light")
-                    self.luxie.log_causal_event(rname, role, old_bri, new_bri, actor, f"Foreign change ({kind}): {why}",
+                    self.echo.log_causal_event(rname, role, old_bri, new_bri, actor, f"Foreign change ({kind}): {why}",
                                                 entity_id=entity_id, ts=now)
                     continue
                 if abs(delta) >= 3:
@@ -224,16 +229,16 @@ class EngineRuntime:
                              tz_name, SeasonalConfig.from_settings(self.seasonal_settings()))
 
     def seasonal_overrides(self) -> dict[str, Any]:
-        m = self.luxie.load_model("_house", "seasonal_overrides")
+        m = self.echo.load_model("_house", "seasonal_overrides")
         return json.loads(m[1]) if m else {}
 
     # ---------------------------------------------------------------- the house model (Standard)
     def house_overrides(self) -> dict[str, Any]:
-        m = self.luxie.load_model("_house", "house_overrides")
+        m = self.echo.load_model("_house", "house_overrides")
         return json.loads(m[1]) if m else {}
 
     def house_locks(self) -> list[str]:
-        m = self.luxie.load_model("_house", "house_locks")
+        m = self.echo.load_model("_house", "house_locks")
         return json.loads(m[1]) if m else []
 
     def house(self) -> tuple[HouseModel | None, list[str]]:
@@ -271,7 +276,7 @@ class EngineRuntime:
         self.darkness_ema[room_name] = (prev[0] + (raw - prev[0]) * a, now)
 
     def seasonal_locks(self) -> list[str]:
-        m = self.luxie.load_model("_house", "seasonal_locks")
+        m = self.echo.load_model("_house", "seasonal_locks")
         return json.loads(m[1]) if m else []
 
     def seasonal_settings(self) -> dict[str, Any]:
@@ -328,7 +333,7 @@ class EngineRuntime:
     def effective_room(self, room_name: str) -> RoomConfig:
         """Room config plus any network devices you accepted as zone signals (no YAML edit needed)."""
         rcfg = self.rooms[room_name]
-        learned = [s for s in self.luxie.get_learned_signals(room_name) if s["status"] == "accepted" and s["zone"]]
+        learned = [s for s in self.echo.get_learned_signals(room_name) if s["status"] == "accepted" and s["zone"]]
         if not learned:
             return rcfg
         zones = {z: zc.model_copy(deep=True) for z, zc in rcfg.presence.zones.items()}
@@ -350,7 +355,7 @@ class EngineRuntime:
         occ = {"room": snap.occupied, **{z: zs.occupied for z, zs in snap.zones.items()}}
         cur = self._pres_minute.get(room_name)
         if cur and cur[0] != minute:
-            self.luxie.record_presence_minute(cur[0], room_name, cur[1])
+            self.echo.record_presence_minute(cur[0], room_name, cur[1])
             cur = None
         if cur is None:
             self._pres_minute[room_name] = (minute, occ)
@@ -364,7 +369,7 @@ class EngineRuntime:
         minute = now.strftime("%Y-%m-%dT%H:%M")
         if self._net_minute and self._net_minute[0] != minute:
             if self._net_minute[1]:
-                self.luxie.record_net_minute(*self._net_minute)
+                self.echo.record_net_minute(*self._net_minute)
             self._net_minute = None
         if self._net_minute is None:
             self._net_minute = (minute, {})
@@ -393,7 +398,7 @@ class EngineRuntime:
         upd.snapshot.recorded = self.live
         if self.live:
             for sig in upd.signal_changes:
-                self.luxie.record_signal_event(room_name, sig.scope, sig.name, sig.source, sig.active,
+                self.echo.record_signal_event(room_name, sig.scope, sig.name, sig.source, sig.active,
                                                sig.available, sig.value, ts=now)
             self._accumulate_minutes(room_name, upd.snapshot, now)
         self.presence_snap[room_name] = upd.snapshot
@@ -556,7 +561,7 @@ class EngineRuntime:
         role_after = ev_after["roles"].get(role)
         to_bri = role_after["brightness_pct"] if role_after else from_bri
 
-        self.luxie.log_causal_event(
+        self.echo.log_causal_event(
             room=room_name,
             role=role,
             from_bri=from_bri,
@@ -593,12 +598,12 @@ class EngineRuntime:
                 new_bri = r_dict["brightness_pct"]
                 # Log real moves only: on/off, or a change of 2 %+ (target_lux jitter would flood the audit log)
                 if prev_bri is None or (prev_bri == 0) != (new_bri == 0) or abs(new_bri - prev_bri) >= 2:
-                    self.luxie.log_causal_event(
+                    self.echo.log_causal_event(
                         room=rname,
                         role=role,
                         from_bri=prev_bri if prev_bri is not None else new_bri,
                         to_bri=new_bri,
-                        actor="luxador_engine",
+                        actor="flint",
                         reason=r_dict["breakdown"]["rule_matched"],
                         breakdown=r_dict["breakdown"],
                         ts=now,
@@ -621,15 +626,15 @@ async def _background_loop() -> None:
             now = datetime.now()
             if runtime.last_rollup is None or (now - runtime.last_rollup).total_seconds() >= 3600:
                 runtime.last_rollup = now
-                runtime.luxie.prune_minutes()
-                runtime.luxie.apply_retention({"ha_history": runtime.settings["detail_days"]})
+                runtime.echo.prune_minutes()
+                runtime.echo.apply_retention({"ha_history": runtime.settings["detail_days"]})
                 if runtime.last_vacuum is None or (now - runtime.last_vacuum).total_seconds() >= 7 * 86400:
                     runtime.last_vacuum = now
-                    runtime.luxie.vacuum()
+                    runtime.echo.vacuum()
             # Phase 1 grid + intent model: refresh hourly from whatever history we hold
             if runtime.last_datalab_rebuild is None or (now - runtime.last_datalab_rebuild).total_seconds() >= 3600:
                 runtime.last_datalab_rebuild = now
-                if runtime.luxie.history_span()["rows"]:
+                if runtime.echo.history_span()["rows"]:
                     for rname in runtime.rooms:
                         runtime.datalab.rebuild(rname)
         except Exception as exc:
@@ -650,10 +655,10 @@ async def lifespan(_app: FastAPI):
         ws_task.cancel()
         tick_task.cancel()
         net_task.cancel()
-        runtime.luxie.close()
+        runtime.echo.close()
 
 
-app = FastAPI(title="El Luxador & Luxie", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Lantern", version="0.1.0", lifespan=lifespan)
 
 
 class PunchRequest(BaseModel):
@@ -838,7 +843,7 @@ async def save_schemas_yaml(req: YamlSaveRequest) -> dict[str, Any]:
 @app.get("/api/luxie/{room_name}/logs")
 async def get_luxie_logs(room_name: str, limit: int = 50) -> dict[str, Any]:
     assert runtime is not None
-    return {"causal_logs": runtime.luxie.get_causal_logs(room_name, limit=limit)}
+    return {"causal_logs": runtime.echo.get_causal_logs(room_name, limit=limit)}
 
 
 @app.get("/api/presence/{room_name}")
@@ -850,7 +855,7 @@ async def get_presence(room_name: str) -> dict[str, Any]:
     return {
         "snapshot": snap.to_dict(),
         "recording": runtime.live,
-        "signal_health": runtime.luxie.signal_health(room_name),
+        "signal_health": runtime.echo.signal_health(room_name),
         "opnsense": runtime.net.status(),
     }
 
@@ -858,14 +863,14 @@ async def get_presence(room_name: str) -> dict[str, Any]:
 @app.get("/api/rooms/{room_name}/contested")
 async def get_contested(room_name: str, hours: float = 24.0) -> dict[str, Any]:
     assert runtime is not None
-    return {"lights": runtime.luxie.contested_lights(room_name, hours=hours)}
+    return {"lights": runtime.echo.contested_lights(room_name, hours=hours)}
 
 
 @app.get("/api/learn/{room_name}/devices")
 async def get_device_associations(room_name: str, days: int = 7) -> dict[str, Any]:
     """Which network devices move with which zones (learned from the minute grid)."""
     assert runtime is not None
-    data = runtime.luxie.net_zone_associations(room_name, days=days, active_kbps=runtime.settings["net_active_kbps"])
+    data = runtime.echo.net_zone_associations(room_name, days=days, active_kbps=runtime.settings["net_active_kbps"])
     data["opnsense"] = runtime.net.status()
     return data
 
@@ -882,7 +887,7 @@ async def decide_device(room_name: str, req: DeviceDecisionRequest) -> dict[str,
     name = req.name
     if req.status == "accepted" and not name:
         name = re.sub(r"[^a-z0-9_]+", "_", (req.host.split(".")[0]).lower()).strip("_") or "device"
-    runtime.luxie.set_learned_signal(room_name, req.host, req.status, zone=req.zone, name=name,
+    runtime.echo.set_learned_signal(room_name, req.host, req.status, zone=req.zone, name=name,
                                      active_kbps=req.active_kbps)
     runtime.update_presence(room_name, datetime.now())  # show the new signal straight away
     return {"ok": True}
@@ -912,7 +917,7 @@ async def datalab_series(room_name: str, range: str = "today", end: str | None =
     days, bucket = RANGES[range]
     end_dt = datetime.fromisoformat(end) if end else datetime.now(runtime.datalab.tz()).replace(tzinfo=None)
     start_dt = end_dt.replace(hour=0, minute=0) if days is None else end_dt - timedelta(days=days)
-    slots = runtime.luxie.load_slots(room_name)
+    slots = runtime.echo.load_slots(room_name)
     d_add_since_active(slots)
     out = d_series(slots, start_dt.strftime("%Y-%m-%dT%H:%M"), end_dt.strftime("%Y-%m-%dT%H:%M"), bucket)
     out.update({"range": range, "start": start_dt.isoformat(timespec="minutes"), "end": end_dt.isoformat(timespec="minutes")})
@@ -1042,8 +1047,8 @@ async def house_model_patch(req: HousePatchRequest) -> dict[str, Any]:
     model, errors = build_house(runtime.settings, runtime.rooms, overrides)
     if errors:
         raise HTTPException(400, {"errors": errors})
-    runtime.luxie.save_model("_house", "house_overrides", json.dumps(overrides))
-    runtime.luxie.save_model("_house", "house_locks", json.dumps(sorted(locks)))
+    runtime.echo.save_model("_house", "house_overrides", json.dumps(overrides))
+    runtime.echo.save_model("_house", "house_locks", json.dumps(sorted(locks)))
     return await house_model_get()
 
 
@@ -1052,7 +1057,7 @@ async def house_model_export() -> dict[str, Any]:
     """One file to back up, diff, or move to a new install."""
     assert runtime is not None
     model, errors = runtime.house()
-    return {"luxador_house_model": STANDARD_VERSION, "exported_at": datetime.now().isoformat(timespec="seconds"),
+    return {"lantern_house_model": STANDARD_VERSION, "exported_at": datetime.now().isoformat(timespec="seconds"),
             "effective": model.model_dump() if model else None, "errors": errors,
             "overrides": runtime.house_overrides(), "locks": runtime.house_locks()}
 
@@ -1063,8 +1068,8 @@ async def house_model_import(req: HouseImportRequest) -> dict[str, Any]:
     model, errors = build_house(runtime.settings, runtime.rooms, req.overrides)
     if errors:
         raise HTTPException(400, {"errors": errors})
-    runtime.luxie.save_model("_house", "house_overrides", json.dumps(req.overrides))
-    runtime.luxie.save_model("_house", "house_locks", json.dumps(sorted(set(req.locks))))
+    runtime.echo.save_model("_house", "house_overrides", json.dumps(req.overrides))
+    runtime.echo.save_model("_house", "house_locks", json.dumps(sorted(set(req.locks))))
     return await house_model_get()
 
 
@@ -1072,7 +1077,7 @@ async def house_model_import(req: HouseImportRequest) -> dict[str, Any]:
 async def curve_suggest(room_name: str) -> dict[str, Any]:
     """Darkness thresholds learned from when you actually switched lights on."""
     _room_or_404(room_name)
-    return suggest_thresholds(runtime.luxie.load_slots(room_name))
+    return suggest_thresholds(runtime.echo.load_slots(room_name))
 
 
 @app.get("/api/rooms/{room_name}/grid")
@@ -1139,8 +1144,8 @@ async def seasonal_tune(req: SeasonalTuneRequest) -> dict[str, Any]:
             merged = {**current, **clean_overrides(req.values)}
         except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc))
-    runtime.luxie.save_model("_house", "seasonal_overrides", json.dumps(merged))
-    runtime.luxie.save_model("_house", "seasonal_locks", json.dumps(sorted(locks)))
+    runtime.echo.save_model("_house", "seasonal_overrides", json.dumps(merged))
+    runtime.echo.save_model("_house", "seasonal_locks", json.dumps(sorted(locks)))
     out = await datalab_year()
     out["locks"] = sorted(locks)
     return out
@@ -1152,9 +1157,9 @@ async def datalab_together(room_name: str) -> dict[str, Any]:
     _room_or_404(room_name)
     from .together import analyse
 
-    slots = runtime.luxie.load_slots(room_name)
+    slots = runtime.echo.load_slots(room_name)
     net: dict[str, dict] = {}
-    for row in runtime.luxie._conn.execute("SELECT minute, host, hostname, kbps FROM net_minutes").fetchall():
+    for row in runtime.echo._conn.execute("SELECT minute, host, hostname, kbps FROM net_minutes").fetchall():
         e = net.setdefault(row["host"], {"label": row["hostname"] or row["host"], "minutes": {}})
         e["minutes"][row["minute"]] = row["kbps"]
     return analyse(slots, net or None, now=datetime.now(runtime.datalab.tz()).replace(tzinfo=None),
@@ -1183,7 +1188,7 @@ async def datalab_rebuild(room_name: str) -> dict[str, Any]:
 
 @app.get("/api/house/areas")
 async def house_areas() -> dict[str, Any]:
-    """Phase 0: Home Assistant's areas vs the rooms Luxador is set up for (read-only)."""
+    """Phase 0: Home Assistant's areas vs the rooms Lantern is set up for (read-only)."""
     assert runtime is not None
     if not runtime.bridge.connected:
         return {"available": False, "reason": "Home Assistant not connected", "rooms": sorted(runtime.rooms)}
@@ -1198,7 +1203,7 @@ async def house_areas() -> dict[str, Any]:
 async def storage() -> dict[str, Any]:
     """How big the database is, what's in it, and how long each table is kept."""
     assert runtime is not None
-    rep = runtime.luxie.storage_report()
+    rep = runtime.echo.storage_report()
     rep["retention_days"] = {**rep["retention_days"], "ha_history": runtime.settings["detail_days"],
                              "slots (5-min grid)": runtime.settings["detail_days"],
                              "presence_minutes / net_minutes": 30, "seasonal": "forever (tiny)",
@@ -1215,7 +1220,7 @@ async def get_net_hosts() -> dict[str, Any]:
 
 def run() -> None:
     settings = _load_settings()
-    uvicorn.run("luxador.main:app", host=settings["host"], port=settings["port"], reload=False)
+    uvicorn.run("lantern.main:app", host=settings["host"], port=settings["port"], reload=False)
 
 
 if __name__ == "__main__":

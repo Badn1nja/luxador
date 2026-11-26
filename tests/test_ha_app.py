@@ -5,10 +5,10 @@ from pathlib import Path
 
 import yaml
 
-from luxador import main as lux_main
+from lantern import main as lux_main
 
 REPO = Path(__file__).resolve().parent.parent
-APP_DIR = REPO / "luxador"
+APP_DIR = REPO / "lantern"
 
 
 def test_repository_layout_is_a_valid_ha_app_repo():
@@ -48,10 +48,10 @@ def test_app_mode_seeds_config_and_reads_options(tmp_path, monkeypatch):
     lux_main._seed_config_dir()
     assert (cfg_dir / "rooms" / "lounge.yaml").read_text(encoding="utf-8") == "room: lounge\n"
 
-    monkeypatch.delenv("LUXADOR_DB_PATH", raising=False)
-    monkeypatch.delenv("LUXADOR_DRY_RUN", raising=False)
-    monkeypatch.delenv("LUXADOR_TICK_SECONDS", raising=False)
+    monkeypatch.delenv("LANTERN_DB_PATH", raising=False)
+    monkeypatch.delenv("LANTERN_DRY_RUN", raising=False)
+    monkeypatch.delenv("LANTERN_TICK_SECONDS", raising=False)
     s = lux_main._load_settings()
     assert s["dry_run"] is False and s["tick_seconds"] == 9
-    assert s["db_path"] == "/data/luxie.db"
+    assert s["db_path"] == "/data/lantern.db"
     assert s["opnsense"]["url"] == "https://fw.example" and s["opnsense"]["verify_ssl"] is False

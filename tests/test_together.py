@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from luxador import datalab as d
-from luxador.parser import load_config_bundle
-from luxador.together import analyse
+from lantern import datalab as d
+from lantern.parser import load_config_bundle
+from lantern.together import analyse
 from synth import TZ, household
 
-CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+CFG = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
 
 
 @pytest.fixture(scope="module")

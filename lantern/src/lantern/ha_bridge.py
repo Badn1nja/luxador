@@ -16,11 +16,11 @@ import websockets
 
 from .models import RoleEvaluation
 
-logger = logging.getLogger("luxador.ha_bridge")
+logger = logging.getLogger("lantern.ha_bridge")
 
 
 class HABridge:
-    """Connects Luxador to Home Assistant (or runs safely in offline/dry-run mode)."""
+    """Flint's link to Home Assistant: reads states, sends light commands (or only logs them in dry run)."""
 
     def __init__(
         self,
@@ -46,7 +46,7 @@ class HABridge:
         self._on_external_light_change = on_external_light_change
         self._stop = False
         # Last payload we sent per entity: only resend when the target actually changes.
-        # Luxador never re-asserts an unchanged target, so it can't get into a write war with another controller.
+        # Flint never re-asserts an unchanged target, so it can't get into a write war with another controller.
         self._last_sent: dict[str, tuple[str, str]] = {}
         # Recognising our own changes. HA's REST API won't take a caller-chosen context id, so we use
         # (1) the HA user id our token belongs to, and (2) a short window after each command where a
@@ -199,7 +199,7 @@ class HABridge:
                         msg = json.loads(await ws.recv())
                         if msg.get("id") == 1 and msg.get("type") == "result":
                             self.own_user_id = (msg.get("result") or {}).get("id")
-                            logger.info("Luxador acts as HA user %s", self.own_user_id)
+                            logger.info("Flint acts as HA user %s", self.own_user_id)
                         elif msg.get("type") == "event":
                             self._handle_state_event(msg.get("event", {}).get("data", {}))
             except Exception as exc:
@@ -227,7 +227,7 @@ class HABridge:
         ctx_id = ctx.get("id", "")
         new_bri = _extract_bri_pct(new_state)
         if self.is_own_change(entity_id, ctx, new_bri):
-            return  # Initiated by El Luxador itself
+            return  # Initiated by Flint itself
 
         old_bri = _extract_bri_pct(old_state) if old_state else new_bri
         if new_bri != old_bri:

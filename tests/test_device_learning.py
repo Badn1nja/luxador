@@ -4,10 +4,10 @@ from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from luxador.luxie import LuxieStore
+from lantern.echo import EchoStore
 
 
-def _seed(store: LuxieStore, minutes: int = 600) -> None:
+def _seed(store: EchoStore, minutes: int = 600) -> None:
     start = datetime.now() - timedelta(minutes=minutes)
     for i in range(minutes):
         m = (start + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M")
@@ -24,7 +24,7 @@ def _seed(store: LuxieStore, minutes: int = 600) -> None:
 
 
 def test_laptop_links_to_desk_and_nas_is_background(tmp_path):
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     _seed(store)
     res = store.net_zone_associations("lounge")
     dev = {d["host"]: d for d in res["devices"]}
@@ -43,16 +43,16 @@ def test_laptop_links_to_desk_and_nas_is_background(tmp_path):
 def test_accepted_device_becomes_zone_signal(tmp_path, monkeypatch):
     from pathlib import Path
 
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg_dst = tmp_path / "config"
     (cfg_dst / "rooms").mkdir(parents=True)
-    src = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+    src = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
     for f in ("settings.yaml", "schemas.yaml"):
         (cfg_dst / f).write_text((src / f).read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "rooms" / "lounge.yaml").write_text((src / "rooms" / "lounge.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg_dst)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "luxie.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "lantern.db"))
 
     with TestClient(lux_main.app) as client:
         bad = client.post("/api/learn/lounge/devices", json={"host": "x", "status": "accepted", "zone": "nope"})

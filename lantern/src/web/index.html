@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>El Luxador & Luxie</title>
+  <title>Lantern</title>
   <style>
     :root {
       --bg: #0c1016;
@@ -231,18 +231,18 @@
       .std-gridtbl, .std-gridtbl tbody, .std-gridtbl tr, .std-gridtbl th, .std-gridtbl td { display: block; width: 100%; }
       .std-gridtbl tr { border-top: 1px solid var(--border); padding: 6px 0; }
       .std-gridtbl td::before { content: attr(data-level); display: block; color: var(--muted); font-size: .72rem; margin: 4px 0 2px; }
-      #view-datalab .card { overflow-x: auto; }
-      #view-datalab table { min-width: 0; }
+      #view-echo .card { overflow-x: auto; }
+      #view-echo table { min-width: 0; }
     }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <div style="font-size:1.7rem">🎭</div>
+      <div style="font-size:1.7rem">🏮</div>
       <div>
-        <h1>El Luxador &amp; Luxie</h1>
-        <small>Systemic Room Lighting Framework • Curves • Dynamic Traits • Causal Telemetry</small>
+        <h1>Lantern</h1>
+        <small>Echo remembers · Luxie learns · Flint lights</small>
       </div>
     </div>
     <div class="badges" id="headerBadges"></div>
@@ -253,9 +253,10 @@
     <label class="inline" style="margin-left:auto;color:var(--muted);">Room
       <select id="roomPicker" onchange="selectRoom(this.value)"></select>
     </label>
-    <button id="nav-switch" onclick="showMainView('switch')">🐱 Luxie</button>
-    <button id="nav-datalab" onclick="showMainView('datalab')">📊 Data</button>
-    <button id="nav-luxie" onclick="showMainView('luxie')">📜 Logs</button>
+    <button id="nav-flint" onclick="showMainView('flint')">🔥 Flint</button>
+    <button id="nav-echo" onclick="showMainView('echo')">📊 Echo</button>
+    <button id="nav-luxie" onclick="showMainView('luxie')">🐱 Luxie</button>
+    <button id="nav-logs" onclick="showMainView('logs')">📜 Logs</button>
   </nav>
 
   <main>
@@ -278,13 +279,13 @@
 
       <div class="card" style="margin-top:14px;">
         <div class="row"><h2>🗺️ House › Rooms (from Home Assistant areas)</h2><span class="pill info">Phase 0 · read-only</span></div>
-        <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Luxador is set up for. Add a room by dropping a <code>rooms/&lt;name&gt;.yaml</code> into the app's config folder; this shows what to put in it.</div>
+        <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Lantern is set up for. Add a room by dropping a <code>rooms/&lt;name&gt;.yaml</code> into the app's config folder; this shows what to put in it.</div>
         <div id="houseAreas" class="muted">Loading…</div>
       </div>
 
       <div class="card" style="margin-top:14px;">
         <h2>⚔️ Contested lights (24 h)</h2>
-        <div class="muted" style="margin-bottom:8px;">Changes made by anything other than Luxador. <strong>automation/integration</strong> = another controller (Magic Areas, Adaptive Lighting, an automation) is also driving the light: remove it from that controller. <strong>user</strong> = a person, which is fine.</div>
+        <div class="muted" style="margin-bottom:8px;">Changes made by anything other than Flint. <strong>automation/integration</strong> = another controller (Magic Areas, Adaptive Lighting, an automation) is also driving the light: remove it from that controller. <strong>user</strong> = a person, which is fine.</div>
         <table id="contestedTable"><thead><tr><th>Light</th><th>By</th><th>Last</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </section>
@@ -292,7 +293,7 @@
 
     <!-- LUXIE LOGS & DATA -->
     <!-- DATA LAB (Phase 1 · Data): how the system sees the house -->
-    <section id="view-datalab" class="view">
+    <section id="view-echo" class="view">
       <div class="dl-filters">
         <div class="seg" role="group" aria-label="Time range">
           <button data-range="today" class="active" onclick="setDlRange('today')">Today</button>
@@ -318,11 +319,6 @@
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:14px;">
-        <div class="row"><h2>What goes together</h2><span class="muted" id="tgMeta"></span></div>
-        <div class="muted" style="margin-bottom:8px;">Every signal as yes/no per 5 minutes. <strong>Goes with</strong> = usually true at the same time (× = how much more than at a random moment). <strong>Usually</strong> = hours it's on at least half the time. <strong>Now</strong> = how often it's on at this hour on this kind of day: the simplest honest prediction.</div>
-        <div id="tgTable" style="overflow-x:auto;"></div>
-      </div>
 
       <div class="card" style="margin-bottom:14px;">
         <div class="row">
@@ -331,7 +327,6 @@
         </div>
         <div class="muted" style="margin-bottom:6px;">Shaded = sun below the horizon. Hover for exact values.</div>
         <div id="dlPanels" class="dl-panels"></div>
-        <details style="margin-top:8px;"><summary class="muted">Table view</summary><div id="dlTable" style="max-height:320px;overflow:auto;"></div></details>
       </div>
 
       <div class="grid" style="margin-bottom:14px;">
@@ -377,40 +372,8 @@
     </section>
 
     <!-- LUXIE: the switchboard (states x bulbs), terminal-style -->
-    <section id="view-switch" class="view">
-      <div class="tui" style="margin-bottom:14px;">
-        <div class="tui-head">
-          <div class="luxie-cat" aria-hidden="true">
-            <svg viewBox="0 0 120 120" width="96" height="96">
-              <defs>
-                <radialGradient id="lxFur" cx="50%" cy="40%" r="65%"><stop offset="0" stop-color="#f6ecff"/><stop offset="1" stop-color="#cdb8f0"/></radialGradient>
-                <radialGradient id="lxEye" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#ffd27a"/><stop offset=".55" stop-color="#ff8a4c"/><stop offset="1" stop-color="#7a2e9e"/></radialGradient>
-              </defs>
-              <path d="M22 50 L18 10 L48 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
-              <path d="M98 50 L102 10 L72 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
-              <path d="M24 44 L23 18 L42 33 Z" fill="#ffb3c8"/><path d="M96 44 L97 18 L78 33 Z" fill="#ffb3c8"/>
-              <ellipse cx="60" cy="64" rx="44" ry="38" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
-              <g class="lx-eyes">
-                <ellipse cx="42" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
-                <ellipse cx="78" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
-                <ellipse cx="42" cy="64" rx="4" ry="9" fill="#2a0f3d"/><ellipse cx="78" cy="64" rx="4" ry="9" fill="#2a0f3d"/>
-                <circle cx="38" cy="55" r="4" fill="#fff"/><circle cx="74" cy="55" r="4" fill="#fff"/>
-                <circle cx="46" cy="70" r="1.8" fill="#fff"/><circle cx="82" cy="70" r="1.8" fill="#fff"/>
-              </g>
-              <ellipse cx="30" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/><ellipse cx="90" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/>
-              <path d="M56 78 q4 4 4 0 q0 4 4 0" fill="none" stroke="#3b1b55" stroke-width="2" stroke-linecap="round"/>
-              <path d="M57 74 l3 2.5 l3 -2.5 z" fill="#ff7b9c"/>
-              <g stroke="#8c6fc4" stroke-width="1.5" stroke-linecap="round"><path d="M14 72 l16 2"/><path d="M14 80 l16 -1"/><path d="M106 72 l-16 2"/><path d="M106 80 l-16 -1"/></g>
-              <path d="M32 98 q28 12 56 0" fill="none" stroke="#ff7b54" stroke-width="5" stroke-linecap="round"/>
-              <g class="lx-bulb"><circle cx="60" cy="108" r="7" fill="#ffe27a" stroke="#c98500" stroke-width="1.5"/><rect x="56.5" y="112" width="7" height="5" rx="1.5" fill="#8b949e"/></g>
-            </svg>
-          </div>
-          <div class="tui-say">
-            <div class="tui-title">LUXIE <span class="tui-dim">· switchboard · room <span id="swRoom"></span></span></div>
-            <div id="swSay" class="tui-bubble">…</div>
-          </div>
-        </div>
-      </div>
+    <section id="view-flint" class="view">
+      <div id="flintMsg" class="card muted" style="margin-bottom:14px;"></div>
       <div class="std-grid">
         <div class="card">
           <div class="row"><h2>General curve</h2><span class="muted">House · how much light a level of darkness needs</span></div>
@@ -459,7 +422,50 @@
       </details>
     </section>
 
+    <!-- LUXIE: the learner -->
     <section id="view-luxie" class="view">
+      <div class="tui" style="margin-bottom:14px;">
+        <div class="tui-head">
+          <div class="luxie-cat" aria-hidden="true">
+            <svg viewBox="0 0 120 120" width="96" height="96">
+              <defs>
+                <radialGradient id="lxFur" cx="50%" cy="40%" r="65%"><stop offset="0" stop-color="#f6ecff"/><stop offset="1" stop-color="#cdb8f0"/></radialGradient>
+                <radialGradient id="lxEye" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#ffd27a"/><stop offset=".55" stop-color="#ff8a4c"/><stop offset="1" stop-color="#7a2e9e"/></radialGradient>
+              </defs>
+              <path d="M22 50 L18 10 L48 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <path d="M98 50 L102 10 L72 32 Z" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <path d="M24 44 L23 18 L42 33 Z" fill="#ffb3c8"/><path d="M96 44 L97 18 L78 33 Z" fill="#ffb3c8"/>
+              <ellipse cx="60" cy="64" rx="44" ry="38" fill="url(#lxFur)" stroke="#8c6fc4" stroke-width="2"/>
+              <g class="lx-eyes">
+                <ellipse cx="42" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
+                <ellipse cx="78" cy="62" rx="11" ry="14" fill="url(#lxEye)" stroke="#3b1b55" stroke-width="2"/>
+                <ellipse cx="42" cy="64" rx="4" ry="9" fill="#2a0f3d"/><ellipse cx="78" cy="64" rx="4" ry="9" fill="#2a0f3d"/>
+                <circle cx="38" cy="55" r="4" fill="#fff"/><circle cx="74" cy="55" r="4" fill="#fff"/>
+                <circle cx="46" cy="70" r="1.8" fill="#fff"/><circle cx="82" cy="70" r="1.8" fill="#fff"/>
+              </g>
+              <ellipse cx="30" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/><ellipse cx="90" cy="80" rx="7" ry="3.5" fill="#ff9ab6" opacity=".7"/>
+              <path d="M56 78 q4 4 4 0 q0 4 4 0" fill="none" stroke="#3b1b55" stroke-width="2" stroke-linecap="round"/>
+              <path d="M57 74 l3 2.5 l3 -2.5 z" fill="#ff7b9c"/>
+              <g stroke="#8c6fc4" stroke-width="1.5" stroke-linecap="round"><path d="M14 72 l16 2"/><path d="M14 80 l16 -1"/><path d="M106 72 l-16 2"/><path d="M106 80 l-16 -1"/></g>
+              <path d="M32 98 q28 12 56 0" fill="none" stroke="#ff7b54" stroke-width="5" stroke-linecap="round"/>
+              <g class="lx-bulb"><circle cx="60" cy="108" r="7" fill="#ffe27a" stroke="#c98500" stroke-width="1.5"/><rect x="56.5" y="112" width="7" height="5" rx="1.5" fill="#8b949e"/></g>
+            </svg>
+          </div>
+          <div class="tui-say">
+            <div class="tui-title">LUXIE <span class="tui-dim">· the learner · room <span id="swRoom"></span></span></div>
+            <div id="swSay" class="tui-bubble">…</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row"><h2>What goes together</h2><span class="muted" id="tgMeta"></span></div>
+        <div class="muted" style="margin-bottom:8px;">Every signal as yes/no per 5 minutes. <strong>Goes with</strong> = usually true at the same time (× = how much more than at a random moment). <strong>Usually</strong> = hours it's on at least half the time. <strong>Now</strong> = how often it's on at this hour on this kind of day: the simplest honest prediction.</div>
+        <div id="tgTable" style="overflow-x:auto;"></div>
+      </div>
+        <details style="margin-top:8px;"><summary class="muted">Table view</summary><div id="dlTable" style="max-height:320px;overflow:auto;"></div></details>
+    </section>
+
+    <section id="view-logs" class="view">
       <div class="card">
         <h2>Audit log: every change and why</h2>
         <table id="causalTable"><thead><tr><th>Time</th><th>Role</th><th>Change</th><th>Actor</th><th>Reason</th></tr></thead><tbody></tbody></table>
@@ -476,7 +482,7 @@
       const data = await fetch("./api/rooms").then(r => r.json());
       ROOMS = data.rooms;
       let saved = null;
-      try { saved = localStorage.getItem("luxador.room"); } catch (e) {}
+      try { saved = localStorage.getItem("lantern.room"); } catch (e) {}
       ROOM = ROOMS.some(r => r.room === saved) ? saved : (ROOMS[0]?.room || null);
       document.getElementById("roomPicker").innerHTML = ROOMS.map(r => `<option value="${esc(r.room)}">${esc(r.friendly_name)}</option>`).join("");
       applyRoomChrome();
@@ -494,7 +500,7 @@
     }
     function selectRoom(name) {
       ROOM = name;
-      try { localStorage.setItem("luxador.room", name); } catch (e) {}
+      try { localStorage.setItem("lantern.room", name); } catch (e) {}
       applyRoomChrome();
       showMainView(CURRENT_VIEW);
     }
@@ -506,9 +512,10 @@
       document.getElementById("view-" + name).classList.add("active");
       document.getElementById("nav-" + name).classList.add("active");
       if (name === "overview") loadOverview();
-      if (name === "luxie") loadLuxie();
-      if (name === "datalab") loadDataLab();
-      if (name === "switch") loadLuxiePage();
+      if (name === "logs") loadLogs();
+      if (name === "echo") loadDataLab();
+      if (name === "flint") loadFlint();
+      if (name === "luxie") loadLuxieTab();
     }
 
 
@@ -575,7 +582,6 @@
       renderDlSummary(s);
       loadYear();
       loadPresenceData();
-      loadTogether();
       fetch(`./api/storage`).then(r => r.json()).then(renderStorage);
       await loadSeries();
     }
@@ -900,16 +906,16 @@
     }
 
     window.addEventListener("scroll", () => { const t = document.getElementById("dlTip"); if (t) t.style.display = "none"; }, { passive: true });
-    window.addEventListener("resize", () => { if (document.getElementById("view-datalab").classList.contains("active") && DL.series) { renderTimeline(DL.series); renderDlSummary(DL.summary); if (DL.year) renderYear(DL.year); } });
+    window.addEventListener("resize", () => { if (document.getElementById("view-echo").classList.contains("active") && DL.series) { renderTimeline(DL.series); renderDlSummary(DL.summary); if (DL.year) renderYear(DL.year); } });
 
     async function loadHouseAreas() {
       const host = document.getElementById("houseAreas");
       const h = await fetch("./api/house/areas").then(r => r.json());
-      if (!h.available) { host.textContent = `${h.reason}. Rooms set up in Luxador: ${h.rooms.join(", ") || "none"}.`; return; }
+      if (!h.available) { host.textContent = `${h.reason}. Rooms set up in Lantern: ${h.rooms.join(", ") || "none"}.`; return; }
       const s = h.summary;
       const cls = { "set up": "ok", "partly set up": "warn", "not set up": "" };
       host.innerHTML = `<div style="margin-bottom:8px;">${s.areas_with_lights} areas with lights · ${s.set_up} set up · ${s.partly} partly · ${s.not_set_up} not set up</div>
-        <div style="overflow-x:auto;"><table><thead><tr><th>HA area</th><th>Luxador room</th><th>Lights</th><th>Presence</th><th>Lux</th><th>Media</th><th>Not in any room yet</th></tr></thead><tbody>${
+        <div style="overflow-x:auto;"><table><thead><tr><th>HA area</th><th>Lantern room</th><th>Lights</th><th>Presence</th><th>Lux</th><th>Media</th><th>Not in any room yet</th></tr></thead><tbody>${
         h.areas.map(a => `<tr>
           <td><strong>${esc(a.name)}</strong></td>
           <td><span class="pill ${cls[a.status]}">${a.room ? esc(a.room) : a.status}</span></td>
@@ -1001,7 +1007,7 @@
       const host = document.getElementById("swList");
       if (!SW.states.length) {
         host.innerHTML = `<div class="tui-dim">No states yet.</div>`;
-        luxieSays("Nya… I haven't found any states yet. Import some history in the <b>Data Lab</b> and I'll sniff them out~");
+        luxieSays("Nya… nothing learned yet. Import some history on the <b>Echo</b> tab and I'll sniff out the patterns~");
         return;
       }
       host.innerHTML = SW.states.map((s, i) => `
@@ -1127,24 +1133,31 @@
     const STD = { m: null, locks: new Set(), timer: null };
     const lg = Math.log10;
 
-    async function loadLuxiePage() {
-      document.getElementById("swRoom").textContent = ROOM;
+    async function loadFlint() {
       await loadHouse();
-      if (document.getElementById("swInsights").open) loadSwitch(false);
     }
+
+    async function loadLuxieTab() {
+      document.getElementById("swRoom").textContent = ROOM;
+      loadTogether();
+      await loadSwitch(false);
+      luxieSays(`Hi! I'm Luxie, I learn how <b>${esc(ROOM)}</b> gets used. Below: what tends to happen together, and when. Soon I'll turn that into activity suggestions for Flint~`);
+    }
+
+    function flintSays(msg) { document.getElementById("flintMsg").innerHTML = `🔥 <strong>Flint</strong> · ${msg}`; }
 
     async function loadHouse() {
       const m = await fetch("./api/house/model").then(r => r.json());
       STD.m = m; STD.locks = new Set(m.locks || []);
       renderStdErrors(m.errors || []);
-      if (!m.model) { luxieSays("Mrrp… the house model has errors. Fix the red ones below and I'll get back to work."); return; }
+      if (!m.model) { flintSays("The house model has errors (in red below). Until they're fixed, rooms use their legacy rules."); return; }
       renderCurveControls(); renderZones();
       refreshStdLive();
       loadSuggest();
       const rm = m.model.rooms[ROOM];
-      luxieSays(rm?.engine === "standard"
-        ? `Here's how I light <b>${esc(ROOM)}</b>: the darker it is, the brighter I go, along your curve. Zones decide <i>where</i>; each light can tweak <i>how</i>. Tap a light to tune it~`
-        : `<b>${esc(ROOM)}</b> still runs on its old hand-written rules. Switch its engine to <b>standard</b> in its room file when you're ready, nya.`);
+      flintSays(rm?.engine === "standard"
+        ? `Lighting <b>${esc(ROOM)}</b> along the general curve: darker room, brighter lights. Zones decide <i>where</i>; each light's settings decide <i>how</i>.`
+        : `<b>${esc(ROOM)}</b> still runs on its legacy hand-written rules (set <code>standard: { engine: standard }</code> in its room file to switch).`);
     }
 
     async function refreshStdLive() {
@@ -1176,10 +1189,10 @@
     async function stdPost(body) {
       const res = await fetch("./api/house/model", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
       const out = await res.json();
-      if (res.status === 423) { luxieSays(`🔒 ${esc(out.detail)}`); return null; }
+      if (res.status === 423) { flintSays(`🔒 ${esc(out.detail)}`); return null; }
       if (!res.ok) {
         const errs = out.detail?.errors || [String(out.detail)];
-        luxieSays(`Hmm, I can't save that: ${errs.map(esc).join("; ")}`);
+        flintSays(`Not saved: ${errs.map(esc).join("; ")}`);
         return null;
       }
       STD.m = out; STD.locks = new Set(out.locks || []);
@@ -1312,7 +1325,7 @@
         <summary><span class="nm"><strong>${esc(name)}</strong></span><span>${chips.map(c => `<span class="std-chip">${esc(c)}</span>`).join(" ")} <span class="std-chip lvl" data-level="${esc(name)}">—</span></span></summary>
         <div class="std-ctl">
           <label><span class="t">Owned by</span><select onchange="stdMove('${esc(name)}', '${zone}', this.value)">${zones.map(z => `<option ${z === zone ? "selected" : ""}>${z}</option>`).join("")}</select></label>
-          <label><span class="t">Luxador drives it</span><input type="checkbox" ${ls.enabled ? "checked" : ""} ${isLocked(p + ".enabled") ? "disabled" : ""} onchange="stdSet('${p}.enabled', this.checked, true)" />${lockBtnStd(p + ".enabled")}</label>
+          <label><span class="t">Flint drives it</span><input type="checkbox" ${ls.enabled ? "checked" : ""} ${isLocked(p + ".enabled") ? "disabled" : ""} onchange="stdSet('${p}.enabled', this.checked, true)" />${lockBtnStd(p + ".enabled")}</label>
           ${selectCtl(p + ".curve", "Follows", ls.curve, ["natural", "brightness_only", "fixed", "switch"])}
           ${ls.curve === "fixed" ? rangeCtl(p + ".fixed_pct", "Fixed at", ls.fixed_pct, 1, 100, 1, (v) => `${Math.round(v)}%`) : ""}
           ${rangeCtl(p + ".scale", "Scale", ls.scale, 0.25, 2, 0.05, (v) => `×${(+v).toFixed(2)}`)}
@@ -1330,7 +1343,7 @@
       const patch = { rooms: { [ROOM]: { zones: {} } } };
       if (from !== "room") patch.rooms[ROOM].zones[from] = { lights: room.zones[from].lights.filter(l => l !== light) };
       if (to !== "room") patch.rooms[ROOM].zones[to] = { lights: [...room.zones[to].lights.filter(l => l !== light), light] };
-      if (await stdPost({ patch })) { renderZones(); refreshStdLive(); luxieSays(`Okay! <b>${esc(light)}</b> now belongs to <b>${esc(to)}</b>~`); }
+      if (await stdPost({ patch })) { renderZones(); refreshStdLive(); flintSays(`<b>${esc(light)}</b> now belongs to zone <b>${esc(to)}</b>.`); }
       else renderZones();
     }
 
@@ -1376,7 +1389,7 @@
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `luxador-house-model-${data.exported_at.slice(0, 10)}.json`;
+      a.download = `lantern-house-model-${data.exported_at.slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(a.href);
     }
@@ -1387,18 +1400,18 @@
         const res = await fetch("./api/house/model/import", { method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({ overrides: data.overrides || {}, locks: data.locks || [] }) });
         const out = await res.json();
-        if (!res.ok) { luxieSays(`That file doesn't fit: ${(out.detail?.errors || [out.detail]).map(esc).join("; ")}`); return; }
-        luxieSays("Imported! Everything checked out, nya~");
+        if (!res.ok) { flintSays(`That file doesn't fit: ${(out.detail?.errors || [out.detail]).map(esc).join("; ")}`); return; }
+        flintSays("Imported: every setting checked out.");
         loadHouse();
-      } catch (e) { luxieSays("That doesn't look like a Luxador model file."); }
+      } catch (e) { flintSays("That doesn't look like a Lantern model file."); }
     }
 
 
     function openRoom(name) {
       ROOM = name;
-      try { localStorage.setItem("luxador.room", name); } catch (e) {}
+      try { localStorage.setItem("lantern.room", name); } catch (e) {}
       applyRoomChrome();
-      showMainView("switch");
+      showMainView("flint");
     }
 
     function updateHeaderBadges(haConnected, dryRun) {
@@ -1439,7 +1452,7 @@
         `<tr><td colspan="4" class="muted">${data.ha_connected ? "Nothing else has touched these lights in 24 h." : "Needs Home Assistant connected."}</td></tr>`;
     }
 
-    async function loadLuxie() {
+    async function loadLogs() {
       const data = await fetch(`./api/luxie/${ROOM}/logs`).then(r => r.json());
       document.querySelector("#causalTable tbody").innerHTML = data.causal_logs.map(c => `
         <tr><td>${c.ts.slice(11, 19)}</td><td>${esc(c.role)}</td><td>${c.from_bri}% → <strong>${c.to_bri}%</strong></td>

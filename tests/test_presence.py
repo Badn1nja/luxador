@@ -2,11 +2,11 @@
 
 from datetime import datetime, timedelta
 
-from luxador.ha_bridge import classify_context
-from luxador.luxie import LuxieStore
-from luxador.opnsense import NetHost, OpnsensePoller, parse_arp, parse_top
-from luxador.parser import load_room_yaml
-from luxador.presence import PresenceTracker
+from lantern.ha_bridge import classify_context
+from lantern.echo import EchoStore
+from lantern.opnsense import NetHost, OpnsensePoller, parse_arp, parse_top
+from lantern.parser import load_room_yaml
+from lantern.presence import PresenceTracker
 
 ROOM_YAML = """
 room: test
@@ -114,7 +114,7 @@ def test_controller_conflicts_are_classified_and_flagged(tmp_path):
     assert classify_context({"parent_id": "p1"})[0] == "automation"
     assert classify_context({})[0] == "integration"
 
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     store.record_foreign_write("light.lamp", "automation", "a", 50, 100, room="test")
     store.record_foreign_write("light.lamp", "automation", "a", 100, 40, room="test")
     store.record_foreign_write("light.other", "user", "u", 50, 60, room="test")

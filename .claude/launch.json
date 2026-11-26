@@ -2,11 +2,31 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "luxador",
+      "name": "lantern",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "luxador.main"],
-      "env": { "PYTHONPATH": "luxador/src" },
+      "runtimeArgs": [
+        "-m",
+        "lantern.main"
+      ],
+      "env": {
+        "PYTHONPATH": "lantern/src"
+      },
       "port": 8099
+    },
+    {
+      "name": "lantern-demo",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "lantern.main"
+      ],
+      "env": {
+        "PYTHONPATH": "lantern/src",
+        "LANTERN_PORT": "8098",
+        "LANTERN_DB_PATH": "C:/Users/KWN/AppData/Local/Temp/claude/6cc19d5af1a9deb6/696142ed-1490-4b80-b9a4-259bdbd3cae1/scratchpad/demo.db",
+        "LANTERN_CONFIG_DIR": "C:/Users/KWN/AppData/Local/Temp/claude/6cc19d5af1a9deb6/696142ed-1490-4b80-b9a4-259bdbd3cae1/scratchpad/democfg"
+      },
+      "port": 8098
     }
   ]
 }

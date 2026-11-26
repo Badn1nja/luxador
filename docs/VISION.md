@@ -1,4 +1,6 @@
-# Luxador · vision and where we actually are
+# 🏮 Lantern · vision and where we actually are
+
+Three parts: **Echo** (the data) remembers, **Luxie** (the learner) finds what goes together, **Flint** (the engine) lights.
 
 ## The vision (one sentence)
 
@@ -18,7 +20,7 @@ That loop is the product. Data, learning and the cat exist to tune it and to sho
 
 | Phase | Goal | Done when |
 |---|---|---|
-| **0 · Structure** | Luxador knows which lights, sensors and zones belong to which room | Rooms match HA areas; every light owned by one zone |
+| **0 · Structure** | Lantern knows which lights, sensors and zones belong to which room | Rooms match HA areas; every light owned by one zone |
 | **1 · Data** *(we are here)* | Trustworthy record of what the house did, plus the core loop running in **dry run** so you can compare "would do" against reality | A week of real history imported; the timeline shows presence, lux and real light levels; the dry-run trace looks right |
 | **2 · Presence** | Room/zone presence you can trust (clear delays, zone ownership, signals) | Presence on the timeline matches what you remember |
 | **3 · Lighting** | Dry run off: the core loop drives the bulbs | A week with no "why did it do that?" |

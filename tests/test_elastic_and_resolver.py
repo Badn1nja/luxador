@@ -3,14 +3,14 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from luxador.elastic import compute_punch_residual, solve_target_lux_brightness
-from luxador.models import PunchState, RoomInputs
-from luxador.parser import load_config_bundle
-from luxador.resolver import resolve_room
+from lantern.elastic import compute_punch_residual, solve_target_lux_brightness
+from lantern.models import PunchState, RoomInputs
+from lantern.parser import load_config_bundle
+from lantern.resolver import resolve_room
 
 
 def _bundle():
-    return load_config_bundle(Path(__file__).resolve().parent.parent / "luxador" / "src" / "config")
+    return load_config_bundle(Path(__file__).resolve().parent.parent / "lantern" / "src" / "config")
 
 
 def test_target_lux_dims_when_daylight_high():
@@ -54,7 +54,7 @@ def test_tv_warps_time_and_isolates_desk_lights():
 
 
 def test_overlay_conditions_days_times_entities():
-    from luxador.resolver import evaluate_overlay_condition as ev
+    from lantern.resolver import evaluate_overlay_condition as ev
 
     fri_1730 = datetime(2026, 11, 27, 17, 30)  # Friday
     thu_1730 = datetime(2026, 11, 26, 17, 30)

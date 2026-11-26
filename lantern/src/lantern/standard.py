@@ -1,4 +1,4 @@
-"""The Luxador Standard v1 in code: the house model (HOUSE > ROOM > ZONE > LIGHT), its validation, and the
+"""The Lantern Standard v1 in code: the house model (HOUSE > ROOM > ZONE > LIGHT), its validation, and the
 general curve. See docs/STANDARD.md; defaults and ranges here must match that document.
 """
 

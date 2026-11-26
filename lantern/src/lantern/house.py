@@ -1,7 +1,7 @@
 """Phase 0 · Structure: HOUSE > ROOM > ZONE.
 
 Reads Home Assistant's own Areas (and the devices/entities assigned to them) and compares them with the rooms
-Luxador is configured for. Read-only: it proposes, it never writes config.
+Lantern is configured for. Read-only: it proposes, it never writes config.
 """
 
 from __future__ import annotations

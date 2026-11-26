@@ -1,2 +1,2 @@
--r luxador/requirements.txt
+-r lantern/requirements.txt
 pytest>=8.0

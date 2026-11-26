@@ -4,9 +4,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from luxador import main as lux_main
+from lantern import main as lux_main
 
-CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+CFG = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
 
 
 def _client(tmp_path, monkeypatch):
@@ -15,7 +15,7 @@ def _client(tmp_path, monkeypatch):
     for f in ("settings.yaml", "schemas.yaml", "rooms/lounge.yaml"):
         (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "luxie.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "lantern.db"))
     return TestClient(lux_main.app)
 
 

@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from luxador import datalab as d
-from luxador.ha_bridge import HABridge
-from luxador.luxie import LuxieStore
-from luxador.parser import load_config_bundle
+from lantern import datalab as d
+from lantern.ha_bridge import HABridge
+from lantern.echo import EchoStore
+from lantern.parser import load_config_bundle
 from synth import ENT, TZ, household
 
-CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+CFG = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
 
 
 @pytest.fixture(scope="module")
@@ -88,8 +88,8 @@ def test_traceback_and_series_cover_the_drop(slots):
 
 def test_bridge_recognises_its_own_changes():
     br = HABridge(ha_url="http://ha", ha_token="t", dry_run=False)
-    br.own_user_id = "luxador-user"
-    assert br.is_own_change("light.a", {"user_id": "luxador-user"}, 40)
+    br.own_user_id = "flint-user"
+    assert br.is_own_change("light.a", {"user_id": "flint-user"}, 40)
     assert not br.is_own_change("light.a", {"user_id": "someone"}, 40)
     import time
     br._recent_cmd["light.a"] = (time.monotonic(), 55)
@@ -98,7 +98,7 @@ def test_bridge_recognises_its_own_changes():
 
 
 def test_datalab_end_to_end_through_api(tmp_path, monkeypatch):
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg_dst = tmp_path / "config"
     (cfg_dst / "rooms").mkdir(parents=True)
@@ -106,12 +106,12 @@ def test_datalab_end_to_end_through_api(tmp_path, monkeypatch):
         (cfg_dst / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "rooms" / "lounge.yaml").write_text((CFG / "rooms" / "lounge.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg_dst)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "luxie.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "lantern.db"))
 
     with TestClient(lux_main.app) as client:
         rt = lux_main.runtime
         rt.settings["time_zone"] = "Europe/London"
-        rt.luxie.store_history(d.normalize_history(household()))
+        rt.echo.store_history(d.normalize_history(household()))
         cov = client.post("/api/datalab/lounge/rebuild").json()
         assert cov["slots"] > 3000
         summ = client.get("/api/datalab/lounge").json()
@@ -124,13 +124,13 @@ def test_datalab_end_to_end_through_api(tmp_path, monkeypatch):
         now = datetime.now(timezone.utc)
         for k in range(5):
             rt.datalab.capture(ENT["lux"], {"state": "100", "last_changed": (now + timedelta(seconds=k)).isoformat()})
-        assert rt.luxie.history_span()["by_source"].get("live") == 1
+        assert rt.echo.history_span()["by_source"].get("live") == 1
 
 
 def test_states_are_discovered_not_defined(slots):
     import copy
 
-    from luxador.states import assign_state, discover_states
+    from lantern.states import assign_state, discover_states
 
     s2 = copy.deepcopy(slots)
     m = discover_states(s2, max_states=28)
@@ -152,10 +152,10 @@ def test_states_are_discovered_not_defined(slots):
 
 
 def test_state_names_survive_rebuild(tmp_path):
-    from luxador.datalab import DataLab
+    from lantern.datalab import DataLab
 
     _, rooms = load_config_bundle(CFG)
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     store.store_history(d.normalize_history(household()))
 
     class NoHA:
@@ -172,7 +172,7 @@ def test_state_names_survive_rebuild(tmp_path):
 
 
 def test_retention_prunes_and_keeps_last_state(tmp_path):
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
     older = (datetime.now(timezone.utc) - timedelta(days=210)).isoformat()
     new = datetime.now(timezone.utc).isoformat()
@@ -187,9 +187,9 @@ def test_retention_prunes_and_keeps_last_state(tmp_path):
 
 
 def test_aged_slots_fold_into_seasonal_once(slots, tmp_path):
-    from luxador.datalab import DataLab
+    from lantern.datalab import DataLab
 
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     store.replace_slots("lounge", slots)
     lab = DataLab(store, {}, {"time_zone": "Europe/London"}, None)
     cutoff = "2026-11-20T00:00"
@@ -205,7 +205,7 @@ def test_aged_slots_fold_into_seasonal_once(slots, tmp_path):
 def test_yearly_sun_model_and_compensation():
     from zoneinfo import ZoneInfo
 
-    from luxador.seasonal import SeasonalConfig, SeasonalModel, sun_elevation
+    from lantern.seasonal import SeasonalConfig, SeasonalModel, sun_elevation
 
     ldn = ZoneInfo("Europe/London")
     assert 61 < sun_elevation(51.5, -0.12, datetime(2026, 6, 21, 13, 0, tzinfo=ldn)) < 63
@@ -222,12 +222,12 @@ def test_yearly_sun_model_and_compensation():
 
 
 def test_resolver_applies_seasonal_only_when_enabled():
-    from luxador.resolver import resolve_room
+    from lantern.resolver import resolve_room
 
     schemas, rooms = load_config_bundle(CFG)
     now = datetime(2026, 12, 21, 19, 0)
     inp = d_inputs = None
-    from luxador.models import RoomInputs
+    from lantern.models import RoomInputs
 
     inp = RoomInputs(occupied=True, ambient_lux=5.0, media_state="off")
     base = resolve_room(rooms["lounge"], schemas, inp, now)
@@ -242,10 +242,10 @@ def test_resolver_applies_seasonal_only_when_enabled():
 
 
 def _lab(tmp_path):
-    from luxador.datalab import DataLab
+    from lantern.datalab import DataLab
 
     _, rooms = load_config_bundle(CFG)
-    store = LuxieStore(tmp_path / "t.db")
+    store = EchoStore(tmp_path / "t.db")
     store.store_history(d.normalize_history(household()))
 
     class NoHA:

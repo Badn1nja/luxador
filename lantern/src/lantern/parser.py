@@ -1,4 +1,4 @@
-"""Human-readable YAML parser for Luxador room maps & compact rules."""
+"""Human-readable YAML parser for Lantern room maps & compact rules."""
 
 from __future__ import annotations
 

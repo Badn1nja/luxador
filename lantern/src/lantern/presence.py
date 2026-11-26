@@ -6,7 +6,7 @@ hold, and distils the result into a *signature*: the sorted set of what is true 
 stable for ``settle_seconds``, so a 5-second sensor flicker or a TV blip never counts as a state.
 
 States themselves are never configured here. Luxie records how long each committed signature lasts,
-and you name a recurring one once (see LuxieStore.pattern_summary / set_pattern_label).
+and you name a recurring one once (see EchoStore.pattern_summary / set_pattern_label).
 """
 
 from __future__ import annotations

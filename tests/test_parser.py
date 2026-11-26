@@ -3,7 +3,7 @@
 from pathlib import Path
 import pytest
 
-from luxador.parser import load_config_bundle, parse_compact_rule
+from lantern.parser import load_config_bundle, parse_compact_rule
 
 
 def test_parse_target_lux_and_time_wrap():
@@ -42,7 +42,7 @@ def test_invalid_rule_raises():
 
 
 def test_load_lounge_config_bundle():
-    cfg_dir = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+    cfg_dir = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
     schemas, rooms = load_config_bundle(cfg_dir)
     assert "sun" in schemas and "tv_vivid" in schemas
     assert "lounge" in rooms

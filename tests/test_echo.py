@@ -1,10 +1,10 @@
 """Luxie store: the causal audit log and that removed tables stay removed."""
 
-from luxador.luxie import LuxieStore
+from lantern.echo import EchoStore
 
 
 def test_causal_log(tmp_path):
-    store = LuxieStore(tmp_path / "luxie.db")
+    store = EchoStore(tmp_path / "lantern.db")
     try:
         store.log_causal_event("lounge", "shoelight", 30, 70, "ha_user", "Manual change via remote")
         logs = store.get_causal_logs("lounge")
@@ -22,7 +22,7 @@ def test_dead_tables_are_dropped(tmp_path):
     con.execute("CREATE TABLE baseline_offsets (id INTEGER)")
     con.commit()
     con.close()
-    store = LuxieStore(db)
+    store = EchoStore(db)
     names = {r[0] for r in store._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "raw_events" not in names and "baseline_offsets" not in names and "slots" in names
     store.close()

@@ -1,12 +1,14 @@
-# El Luxador & Luxie
+# 🏮 Lantern
 
-Presence-learning lighting engine. Open it from the **Luxador** sidebar panel.
+Lights that follow presence and darkness, learned from your house. Open it from the **Lantern** sidebar panel.
+
+**Echo** remembers what the house did, **Luxie** learns what goes together, **Flint** lights it.
 
 ## First start
 
 - Starts in **dry run**: it computes and logs what it would do, but never touches your bulbs. Leave it on
   for the first week while Phase 1 records data, and turn it off on the Configuration tab when you're happy.
-- Example config is copied to the app's config folder: `/addon_configs/<id>_luxador/` on your HA host
+- Example config is copied to the app's config folder: `/addon_configs/<id>_lantern/` on your HA host
   (reach it with the File editor / Samba / SSH apps). Edit `rooms/lounge.yaml` for your entities, or add more
   `rooms/*.yaml` files, then restart the app. Your edits are never overwritten.
 - Home Assistant access is automatic (Supervisor token); no URL or token needed.
@@ -22,5 +24,5 @@ Presence-learning lighting engine. Open it from the **Luxador** sidebar panel.
 
 ## One controller per light
 
-Take the lights Luxador drives out of Magic Areas, Adaptive Lighting and any automations. Anything that
+Take the lights Flint drives out of Magic Areas, Adaptive Lighting and any automations. Anything that
 still writes to them shows up as **fighting** under *Luxie Logs & Data > Contested Lights*.

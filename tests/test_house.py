@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from luxador.house import classify, house_overview
-from luxador.parser import load_config_bundle
+from lantern.house import classify, house_overview
+from lantern.parser import load_config_bundle
 
-CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+CFG = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
 
 
 def test_classify_uses_domain_and_device_class():
@@ -47,7 +47,7 @@ def test_areas_compared_with_rooms():
 def test_year_endpoint_reachable_and_rooms_list_roles(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg = tmp_path / "config"
     (cfg / "rooms").mkdir(parents=True)
@@ -57,7 +57,7 @@ def test_year_endpoint_reachable_and_rooms_list_roles(tmp_path, monkeypatch):
     for f in ("schemas.yaml", "rooms/lounge.yaml"):
         (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "l.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "l.db"))
     with TestClient(lux_main.app) as client:
         y = client.get("/api/house/year").json()
         assert y["located"] and len(y["days"]) in (365, 366) and y["location_source"] == "settings"
@@ -71,7 +71,7 @@ def test_year_endpoint_reachable_and_rooms_list_roles(tmp_path, monkeypatch):
 def test_seasonal_lift_is_tunable_live(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg = tmp_path / "config"
     (cfg / "rooms").mkdir(parents=True)
@@ -81,7 +81,7 @@ def test_seasonal_lift_is_tunable_live(tmp_path, monkeypatch):
     for f in ("schemas.yaml", "rooms/lounge.yaml"):
         (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "l.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "l.db"))
     with TestClient(lux_main.app) as client:
         y = client.post("/api/house/seasonal", json={"values": {"enabled": True, "winter_boost_max_pct": 25,
                                                                 "winter_kelvin_shift": 9999}}).json()
@@ -99,7 +99,7 @@ def test_seasonal_lift_is_tunable_live(tmp_path, monkeypatch):
 def test_seasonal_locks_block_edits_and_survive_reset(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg = tmp_path / "config"
     (cfg / "rooms").mkdir(parents=True)
@@ -109,7 +109,7 @@ def test_seasonal_locks_block_edits_and_survive_reset(tmp_path, monkeypatch):
     for f in ("schemas.yaml", "rooms/lounge.yaml"):
         (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "l.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "l.db"))
     with TestClient(lux_main.app) as client:
         client.post("/api/house/seasonal", json={"values": {"winter_boost_max_pct": 22}, "locks": {"winter_boost_max_pct": True}})
         assert client.post("/api/house/seasonal", json={"values": {"winter_boost_max_pct": 5}}).status_code == 423

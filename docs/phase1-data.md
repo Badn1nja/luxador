@@ -13,7 +13,7 @@ learned light levels) is built on top of it. Garbage in, garbage out, so every n
 | Live capture | Same entities as history, recorded as they change | From now on | Keeps the grid growing past the recorder purge |
 
 Lights have no long-term statistics, so light-level history only reaches back as far as the recorder keeps.
-To get more, raise `purge_keep_days` in HA before importing. Luxador keeps its own copy from then on.
+To get more, raise `purge_keep_days` in HA before importing. Echo keeps its own copy from then on.
 
 All of it lands in one raw table, `ha_history (entity_id, ts, state, attrs)`, whether imported or live, so
 there is exactly one source of truth.

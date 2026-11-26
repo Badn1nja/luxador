@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger("luxador.opnsense")
+logger = logging.getLogger("lantern.opnsense")
 
 ARP_PATHS = ("/api/diagnostics/interface/get_arp", "/api/diagnostics/interface/getArp")
 TOP_PATH = "/api/diagnostics/traffic/top/{iface}"

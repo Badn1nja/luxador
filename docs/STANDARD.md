@@ -1,4 +1,4 @@
-# The Luxador Standard (v1)
+# The Lantern Standard (v1)
 
 One page that says what every moving part is, who owns it, what it defaults to, and in which order things
 happen. The code is built and tested against this document; if they disagree, that's a bug.
@@ -55,7 +55,7 @@ With no usable lux sensor, the sun decides: elevation ≥ 10° → 0, ≤ −6°
 
 | Setting | Default | Range | Meaning |
 |---|---|---|---|
-| `enabled` | true | bool | false = Luxador never touches this light |
+| `enabled` | true | bool | false = Flint never touches this light |
 | `curve` | `natural` | `natural` · `brightness_only` · `fixed` · `switch` | natural = curve + colour; brightness_only = leave colour alone; fixed = `fixed_pct` whenever needed; switch = on/off only |
 | `fixed_pct` | 80 | 1–100 | level for `fixed` |
 | `scale` | 1.0 | 0.25–2.0 | multiplies the curve (this lamp brighter/dimmer than the room) |
@@ -69,7 +69,7 @@ With no usable lux sensor, the sun decides: elevation ≥ 10° → 0, ≤ −6°
 
 1. **Built-in defaults** (this document)
 2. **Config files**: `settings.yaml`, `rooms/*.yaml`
-3. **UI settings** (stored in Luxador's database)
+3. **UI settings** (stored in Echo, Lantern's database)
 4. **Locks**: a locked setting can't be changed by 3, by a reset, or by any future auto-tuning, until unlocked.
 
 At run time, on top of the settings: **layers** (TV, party, sleep, wake, seasonal lift; each eases in and

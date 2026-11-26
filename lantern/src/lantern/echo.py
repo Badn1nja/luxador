@@ -16,8 +16,8 @@ def _utc_iso(dt: datetime | None = None) -> str:
     return dt.isoformat()
 
 
-class LuxieStore:
-    """SQLite-backed intelligence & telemetry sidekick for El Luxador."""
+class EchoStore:
+    """Echo: Lantern's memory. Everything the house did, in SQLite (history, the 5-minute grid, logs, links)."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -255,7 +255,7 @@ class LuxieStore:
         self._conn.commit()
 
     def contested_lights(self, room: str | None = None, hours: float = 24.0) -> list[dict[str, Any]]:
-        """Lights something other than Luxador changed recently, grouped by entity and who did it."""
+        """Lights something other than Flint changed recently, grouped by entity and who did it."""
         cutoff = _utc_iso(datetime.now(timezone.utc) - timedelta(hours=hours))
         q = "SELECT entity_id, kind, COUNT(*) AS n, MAX(ts) AS last_ts FROM foreign_writes WHERE ts >= ?"
         args: list[Any] = [cutoff]

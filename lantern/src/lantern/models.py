@@ -1,4 +1,4 @@
-"""Core domain models for El Luxador & Luxie."""
+"""Core domain models for Lantern."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The Luxador Standard v1 (docs/STANDARD.md): model validation, the curve, the pipeline, and its invariants."""
+"""The Lantern Standard v1 (docs/STANDARD.md): model validation, the curve, the pipeline, and its invariants."""
 
 from datetime import datetime
 from pathlib import Path
@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from luxador.models import RoomInputs
-from luxador.parser import load_config_bundle
-from luxador.resolver import resolve_room
-from luxador.standard import (
+from lantern.models import RoomInputs
+from lantern.parser import load_config_bundle
+from lantern.resolver import resolve_room
+from lantern.standard import (
     CurveSettings,
     build_house,
     curve_level,
@@ -20,7 +20,7 @@ from luxador.standard import (
     suggest_thresholds,
 )
 
-CFG = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
+CFG = Path(__file__).resolve().parent.parent / "lantern" / "src" / "config"
 SETTINGS = {"curve": {}}
 
 
@@ -145,7 +145,7 @@ def test_invariant_disabled_and_ignored_are_hands_off(bundle):
 def test_hands_off_light_is_never_sent_a_command(bundle):
     import asyncio
 
-    from luxador.ha_bridge import HABridge
+    from lantern.ha_bridge import HABridge
 
     _, rooms = bundle
     ev = _eval(bundle, _house(rooms, {"rooms": {"lounge": {"lights": {"overhead": {"enabled": False}}}}}))
@@ -178,14 +178,14 @@ def test_thresholds_learned_from_switch_ons():
 # ---------------------------------------------------------------- API: change, lock, export, import, grid
 
 def test_house_model_api(tmp_path, monkeypatch):
-    from luxador import main as lux_main
+    from lantern import main as lux_main
 
     cfg = tmp_path / "config"
     (cfg / "rooms").mkdir(parents=True)
     for f in ("settings.yaml", "schemas.yaml", "rooms/lounge.yaml"):
         (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
-    monkeypatch.setenv("LUXADOR_DB_PATH", str(tmp_path / "l.db"))
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "l.db"))
     with TestClient(lux_main.app) as c:
         m = c.get("/api/house/model").json()
         assert m["version"] == 1 and not m["errors"] and len(m["curve_points"]) == 60
@@ -196,7 +196,7 @@ def test_house_model_api(tmp_path, monkeypatch):
         bad = c.post("/api/house/model", json={"patch": {"rooms": {"lounge": {"lights": {"overhead": {"scale": 9}}}}}})
         assert bad.status_code == 400 and "scale" in str(bad.json())
         exp = c.get("/api/house/model/export").json()
-        assert exp["luxador_house_model"] == 1 and exp["locks"] == ["curve.night_max_pct"]
+        assert exp["lantern_house_model"] == 1 and exp["locks"] == ["curve.night_max_pct"]
         imp = c.post("/api/house/model/import", json={"overrides": {"curve": {"min_pct": 5}}, "locks": []}).json()
         assert imp["model"]["curve"]["min_pct"] == 5 and imp["model"]["curve"]["night_max_pct"] == 35
         g = c.get("/api/rooms/lounge/grid").json()
