@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from .datalab import DEFAULT_INTENT_POLICY, RANGES, DataLab
+from .datalab import add_since_active as d_add_since_active
+from .datalab import series as d_series
 from .ha_bridge import HABridge
 from .luxie import LuxieStore
 from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSpec
@@ -66,6 +69,20 @@ def _ha_options() -> dict[str, Any]:
         return {}
 
 
+def _load_intent_policy() -> dict[str, dict[str, float]]:
+    """config/intents.yaml: priority + min_confidence per intent (defaults if the file is missing)."""
+    path = CONFIG_DIR / "intents.yaml"
+    if not path.exists():
+        return DEFAULT_INTENT_POLICY
+    try:
+        data = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("intents") or {}
+        return {k: {"priority": float(v.get("priority", 0)), "min_confidence": float(v.get("min_confidence", 0.5))}
+                for k, v in data.items()}
+    except Exception as exc:
+        logger.warning("Bad intents.yaml (%s); using defaults", exc)
+        return DEFAULT_INTENT_POLICY
+
+
 def _load_settings() -> dict[str, Any]:
     path = CONFIG_DIR / "settings.yaml"
     data = (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}) or {}
@@ -91,6 +108,10 @@ def _load_settings() -> dict[str, Any]:
         "port": int(os.environ.get("LUXADOR_PORT", data.get("port", 8099))),
         "presence_settle_seconds": float(data.get("presence_settle_seconds", 45)),
         "net_active_kbps": float(data.get("net_active_kbps", 20)),
+        "outdoor_lux_sensor": str(data.get("outdoor_lux_sensor") or ""),
+        "sun_entity": str(data.get("sun_entity") or "sun.sun"),
+        "time_zone": str(data.get("time_zone") or ""),
+        "max_states": int(data.get("max_states", 28) or 28),
         "opnsense": {
             "url": os.environ.get("LUXADOR_OPNSENSE_URL", opn.get("url", "")),
             "api_key": os.environ.get("LUXADOR_OPNSENSE_KEY", opn.get("api_key", "")),
@@ -132,7 +153,11 @@ class EngineRuntime:
             ha_token=self.settings["ha_token"],
             dry_run=self.settings["dry_run"],
             on_external_light_change=self._handle_external_light_change,
+            on_state_change=lambda e, st: self.datalab.capture(e, st),
         )
+        self.datalab = DataLab(self.luxie, self.rooms, self.settings, self.bridge, policy=_load_intent_policy())
+        self.last_active_at: dict[str, datetime] = {}
+        self.last_datalab_rebuild: datetime | None = None
         # SANDBOX ONLY: a static snapshot of the Lounge entities captured once, so the UI has something to
         # show without HA. It is labelled as sandbox data everywhere and never written to the presence tables.
         for rname, rcfg in self.rooms.items():
@@ -184,6 +209,24 @@ class EngineRuntime:
 
     def reload(self) -> None:
         self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
+        self.datalab.rooms = self.rooms
+        self.datalab.policy = _load_intent_policy()
+
+    def _track_activity(self, room_name: str, inputs: dict[str, Any], ev: dict[str, Any], now: datetime) -> None:
+        lights_on = any(
+            self.bridge.states.get(e, {}).get("state") == "on"
+            for ents in self.rooms[room_name].bulbs.values() for e in ents
+        )
+        if inputs.get("occupied") or lights_on or inputs.get("media_state") in ("playing", "buffering"):
+            self.last_active_at[room_name] = now
+
+    def live_intent(self, room_name: str, now: datetime | None = None) -> dict[str, Any]:
+        now = now or datetime.now()
+        inp = self.current_inputs(room_name)
+        last = self.last_active_at.get(room_name)
+        since = (now - last).total_seconds() / 60.0 if last else None
+        return self.datalab.live_intent(room_name, inp.occupied, inp.media_state in ("playing", "buffering"), since,
+                                        zones=inp.zones)
 
     @property
     def live(self) -> bool:
@@ -498,6 +541,7 @@ class EngineRuntime:
                     ts=now,
                 )
                 self._sample_lights(rname, inputs, ev, now)
+                self._track_activity(rname, inputs, ev, now)
             cmds: list[dict[str, Any]] = []
             for role, r_dict in ev["roles"].items():
                 prev_bri = self.last_applied_bri.get((rname, role))
@@ -532,6 +576,12 @@ async def _background_loop() -> None:
                 runtime.last_rollup = now
                 runtime.luxie.run_rollup()
                 runtime.luxie.prune_minutes()
+            # Phase 1 grid + intent model: refresh hourly from whatever history we hold
+            if runtime.last_datalab_rebuild is None or (now - runtime.last_datalab_rebuild).total_seconds() >= 3600:
+                runtime.last_datalab_rebuild = now
+                if runtime.luxie.history_span()["rows"]:
+                    for rname in runtime.rooms:
+                        runtime.datalab.rebuild(rname)
         except Exception as exc:
             logger.exception("Engine tick error: %s", exc)
         await asyncio.sleep(runtime.settings["tick_seconds"])
@@ -594,6 +644,20 @@ class DeviceDecisionRequest(BaseModel):
     zone: str | None = None
     name: str | None = None
     active_kbps: float | None = None
+
+
+class ImportRequest(BaseModel):
+    days: int = 10
+
+
+class IntentLabelRequest(BaseModel):
+    start: str  # local "YYYY-MM-DDTHH:MM"
+    end: str
+    intent: str
+
+
+class StateNameRequest(BaseModel):
+    name: str | None = None
 
 
 class OffsetActionRequest(BaseModel):
@@ -869,6 +933,89 @@ async def decide_device(room_name: str, req: DeviceDecisionRequest) -> dict[str,
                                      active_kbps=req.active_kbps)
     runtime.update_presence(room_name, datetime.now())  # show the new signal straight away
     return {"ok": True}
+
+
+@app.get("/api/datalab/{room_name}")
+async def datalab_summary(room_name: str) -> dict[str, Any]:
+    """Phase 1 · Data: coverage, light traceback, lux profile, intents, sleep/wake times, model quality."""
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+    out = runtime.datalab.summary(room_name)
+    out["live_intent"] = runtime.live_intent(room_name)
+    out["ha_connected"] = runtime.bridge.connected
+    return out
+
+
+@app.get("/api/datalab/{room_name}/series")
+async def datalab_series(room_name: str, range: str = "today", end: str | None = None) -> dict[str, Any]:
+    """Time series for the dashboard: today (5-min), week (15-min) or month (hourly)."""
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+    if range not in RANGES:
+        raise HTTPException(400, f"range must be one of {', '.join(RANGES)}")
+    days, bucket = RANGES[range]
+    end_dt = datetime.fromisoformat(end) if end else datetime.now(runtime.datalab.tz()).replace(tzinfo=None)
+    start_dt = end_dt.replace(hour=0, minute=0) if days is None else end_dt - timedelta(days=days)
+    slots = runtime.luxie.load_slots(room_name)
+    d_add_since_active(slots)
+    out = d_series(slots, start_dt.strftime("%Y-%m-%dT%H:%M"), end_dt.strftime("%Y-%m-%dT%H:%M"), bucket,
+                   model=runtime.datalab.model(room_name), policy=runtime.datalab.policy)
+    out.update({"range": range, "start": start_dt.isoformat(timespec="minutes"), "end": end_dt.isoformat(timespec="minutes")})
+    return out
+
+
+@app.post("/api/datalab/{room_name}/states/{state_id}/name")
+async def datalab_name_state(room_name: str, state_id: int, req: StateNameRequest) -> dict[str, Any]:
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+    try:
+        return runtime.datalab.name_state(room_name, state_id, req.name)
+    except KeyError:
+        raise HTTPException(404, f"Unknown state {state_id}")
+
+
+@app.post("/api/datalab/import")
+async def datalab_import(req: ImportRequest) -> dict[str, Any]:
+    """Pull recorder history (+ long-term lux statistics) from HA, then rebuild every room's grid and model."""
+    assert runtime is not None
+    if not runtime.bridge.configured:
+        raise HTTPException(400, "Home Assistant is not connected")
+    if runtime.datalab.status.get("state") == "importing":
+        return runtime.datalab.status
+    asyncio.create_task(runtime.datalab.import_history(days=max(1, min(req.days, 365))))
+    return {"state": "importing", "days": req.days}
+
+
+@app.post("/api/datalab/{room_name}/rebuild")
+async def datalab_rebuild(room_name: str) -> dict[str, Any]:
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+    return runtime.datalab.rebuild(room_name)
+
+
+@app.post("/api/datalab/{room_name}/labels")
+async def datalab_add_label(room_name: str, req: IntentLabelRequest) -> dict[str, Any]:
+    assert runtime is not None
+    if room_name not in runtime.rooms:
+        raise HTTPException(404, f"Unknown room: {room_name}")
+    intent = req.intent.strip().lower()
+    if intent not in runtime.datalab.policy:
+        raise HTTPException(400, f"Unknown intent {intent!r}; known: {', '.join(runtime.datalab.policy)}")
+    if not req.start < req.end:
+        raise HTTPException(400, "start must be before end")
+    runtime.luxie.add_intent_label(room_name, req.start[:16], req.end[:16], intent)
+    return runtime.datalab.rebuild(room_name)
+
+
+@app.delete("/api/datalab/{room_name}/labels/{label_id}")
+async def datalab_delete_label(room_name: str, label_id: int) -> dict[str, Any]:
+    assert runtime is not None
+    runtime.luxie.delete_intent_label(room_name, label_id)
+    return runtime.datalab.rebuild(room_name)
 
 
 @app.get("/api/net/hosts")

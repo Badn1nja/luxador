@@ -48,6 +48,8 @@ Inside HA as an app this is automatic. For local dev, edit `luxador/src/config/s
 | **1 · Data** | Record the truth: every signal change (`signal_events`), every settled presence pattern and how long it lasted (`episodes`), what each light *actually* was (`light_samples`), and who else touched a light (`foreign_writes`). Live HA only; the sandbox never writes these. | Built, starts when HA is connected |
 | **2 · Learn presence** | Luxie lists the recurring patterns (e.g. `desk+desk.laptop`, weekdays 13:00–18:00) and you name each one once. Named patterns become states: `state(working)` in rules, `when: "state == working"` in overlays. A new combination that is close to a named one (Jaccard ≥ 0.5) inherits its name. | Built |
 | **3 · Learn lighting** | Weekly rolling median of actual levels per state/role/hour, so a room can start from an empty YAML. | Read-only preview (`/api/learn/{room}/weekly`) |
+| **Data Lab** | Traceback import from HA's recorder + long-term stats, a 5-minute grid, intent model with priority layering, up to 28 **discovered** states with per-light behaviour, and a Grafana-lite dashboard (today/week/month). See [docs/phase1-data.md](docs/phase1-data.md). | Built (read-only) |
+| **4 · Custom event log** | Your own "trigger" / "suspected" markers as extra context. | Planned |
 
 ## ROOM > PRESENCE > ZONE
 

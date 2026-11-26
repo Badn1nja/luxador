@@ -6,7 +6,9 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
@@ -26,6 +28,7 @@ class HABridge:
         ha_token: str = "",
         dry_run: bool = True,
         on_external_light_change: Callable[[str, int, int, str, str, str], None] | None = None,
+        on_state_change: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         # Auto-detect Supervisor inside Home Assistant Apps (Add-ons)
         sup_token = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -45,6 +48,13 @@ class HABridge:
         # Last payload we sent per entity: only resend when the target actually changes.
         # Luxador never re-asserts an unchanged target, so it can't get into a write war with another controller.
         self._last_sent: dict[str, tuple[str, str]] = {}
+        # Recognising our own changes. HA's REST API won't take a caller-chosen context id, so we use
+        # (1) the HA user id our token belongs to, and (2) a short window after each command where a
+        # brightness matching what we just sent is ours.
+        self.own_user_id: str | None = None
+        self._recent_cmd: dict[str, tuple[float, int]] = {}  # entity -> (monotonic time, brightness %)
+        self._on_state_change = on_state_change
+        self.time_zone: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -55,6 +65,88 @@ class HABridge:
             "Authorization": f"Bearer {self.ha_token}",
             "Content-Type": "application/json",
         }
+
+    def ws_url(self) -> str:
+        if "supervisor/core" in self.ha_url:
+            return "ws://supervisor/core/websocket"
+        return self.ha_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+
+    async def _ws_auth(self, ws: Any) -> None:
+        auth_req = json.loads(await ws.recv())
+        if auth_req.get("type") == "auth_required":
+            await ws.send(json.dumps({"type": "auth", "access_token": self.ha_token}))
+            auth_res = json.loads(await ws.recv())
+            if auth_res.get("type") != "auth_ok":
+                raise RuntimeError(f"HA WebSocket auth failed: {auth_res}")
+
+    async def ws_command(self, payload: dict[str, Any], timeout: float = 60.0) -> Any:
+        """One-shot WebSocket command (own connection), e.g. recorder/statistics_during_period."""
+        async with websockets.connect(self.ws_url(), max_size=64 * 1024 * 1024) as ws:
+            await self._ws_auth(ws)
+            await ws.send(json.dumps({"id": 1, **payload}))
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if msg.get("id") == 1 and msg.get("type") == "result":
+                    if not msg.get("success"):
+                        raise RuntimeError(f"HA command {payload.get('type')} failed: {msg.get('error')}")
+                    return msg.get("result")
+
+    async def fetch_time_zone(self) -> str | None:
+        if not self.configured:
+            return None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{self.ha_url}/api/config", headers=self._headers())
+            resp.raise_for_status()
+            self.time_zone = resp.json().get("time_zone")
+        return self.time_zone
+
+    async def fetch_history(
+        self, entity_ids: list[str], start: datetime, end: datetime, chunk_hours: int = 24,
+    ) -> list[dict[str, Any]]:
+        """Recorder history for entities between start and end (UTC-aware), fetched a day at a time."""
+        out: list[dict[str, Any]] = []
+        if not self.configured or not entity_ids:
+            return out
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            t = start
+            while t < end:
+                t2 = min(end, t + timedelta(hours=chunk_hours))
+                resp = await client.get(
+                    f"{self.ha_url}/api/history/period/{t.isoformat()}",
+                    headers=self._headers(),
+                    params={"filter_entity_id": ",".join(entity_ids), "end_time": t2.isoformat(),
+                            "significant_changes_only": "0"},
+                )
+                resp.raise_for_status()
+                for series in resp.json() or []:
+                    out.extend(series)
+                t = t2
+        return out
+
+    async def fetch_statistics(self, statistic_ids: list[str], start: datetime, end: datetime) -> dict[str, list]:
+        """Hourly long-term statistics (mean/min/max) for numeric sensors."""
+        if not self.configured or not statistic_ids:
+            return {}
+        return await self.ws_command({
+            "type": "recorder/statistics_during_period",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "statistic_ids": statistic_ids,
+            "period": "hour",
+            "types": ["mean", "min", "max"],
+        }) or {}
+
+    def is_own_change(self, entity_id: str, ctx: dict[str, Any], new_bri: int) -> bool:
+        ctx_id = ctx.get("id", "")
+        parent_id = ctx.get("parent_id", "")
+        if ctx_id in self._own_context_ids or parent_id in self._own_context_ids:
+            return True
+        if self.own_user_id and ctx.get("user_id") == self.own_user_id:
+            return True
+        recent = self._recent_cmd.get(entity_id)
+        if recent and time.monotonic() - recent[0] < 15.0 and abs(recent[1] - new_bri) <= 2:
+            return True
+        return False
 
     def register_own_context(self, context_id: str) -> None:
         self._own_context_ids.add(context_id)
@@ -78,27 +170,25 @@ class HABridge:
             logger.info("No HA URL/token configured; running in standalone sandbox mode.")
             return
 
-        ws_url = self.ha_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-        if "supervisor/core" in self.ha_url:
-            ws_url = "ws://supervisor/core/websocket"
-
         while not self._stop:
             try:
                 await self.fetch_initial_states()
-                async with websockets.connect(ws_url) as ws:
-                    auth_req = json.loads(await ws.recv())
-                    if auth_req.get("type") == "auth_required":
-                        await ws.send(json.dumps({"type": "auth", "access_token": self.ha_token}))
-                        auth_res = json.loads(await ws.recv())
-                        if auth_res.get("type") != "auth_ok":
-                            raise RuntimeError(f"HA WebSocket auth failed: {auth_res}")
-
+                try:
+                    await self.fetch_time_zone()
+                except Exception as exc:
+                    logger.warning("Could not read HA time zone (%s); using system local time", exc)
+                async with websockets.connect(self.ws_url()) as ws:
+                    await self._ws_auth(ws)
+                    await ws.send(json.dumps({"id": 1, "type": "auth/current_user"}))
+                    await ws.send(json.dumps({"id": 2, "type": "subscribe_events", "event_type": "state_changed"}))
                     self.connected = True
                     self._last_sent.clear()  # fresh connection: allow one full re-send
-                    await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
                     while not self._stop:
                         msg = json.loads(await ws.recv())
-                        if msg.get("type") == "event":
+                        if msg.get("id") == 1 and msg.get("type") == "result":
+                            self.own_user_id = (msg.get("result") or {}).get("id")
+                            logger.info("Luxador acts as HA user %s", self.own_user_id)
+                        elif msg.get("type") == "event":
                             self._handle_state_event(msg.get("event", {}).get("data", {}))
             except Exception as exc:
                 self.connected = False
@@ -112,17 +202,21 @@ class HABridge:
         if not entity_id or not new_state:
             return
         self.states[entity_id] = new_state
+        if self._on_state_change:
+            try:
+                self._on_state_change(entity_id, new_state)
+            except Exception as exc:  # never let capture break the event loop
+                logger.warning("state capture failed for %s: %s", entity_id, exc)
 
         if not entity_id.startswith("light.") or not self._on_external_light_change:
             return
 
         ctx = new_state.get("context", {}) or {}
         ctx_id = ctx.get("id", "")
-        parent_id = ctx.get("parent_id", "")
-        if ctx_id in self._own_context_ids or parent_id in self._own_context_ids:
+        new_bri = _extract_bri_pct(new_state)
+        if self.is_own_change(entity_id, ctx, new_bri):
             return  # Initiated by El Luxador itself
 
-        new_bri = _extract_bri_pct(new_state)
         old_bri = _extract_bri_pct(old_state) if old_state else new_bri
         if new_bri != old_bri:
             kind, actor = classify_context(ctx)
@@ -173,6 +267,8 @@ class HABridge:
                 continue
             self._last_sent[entity_id] = fingerprint
             if not self.dry_run and self.configured:
+                sent_bri = int(payload.get("brightness_pct", 100)) if service == "turn_on" else 0
+                self._recent_cmd[entity_id] = (time.monotonic(), sent_bri)
                 await self._call_service("light", service, payload)
 
         return commands

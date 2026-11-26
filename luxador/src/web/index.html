@@ -119,6 +119,34 @@
     }
     .kpi { font-size: 1.55rem; font-weight: 700; }
     .muted { color: var(--muted); font-size: 0.82rem; }
+    /* ---- Data Lab (validated dark categorical steps on --panel #151b24) ---- */
+    :root {
+      --i-sleep: #3987e5; --i-evening: #d95926; --i-day: #199e70; --i-wake: #c98500; --i-nightlight: #d55181;
+      --i-away: #4a5263;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #0ca30c;
+      --grid: #232c3b; --night: rgba(120, 140, 190, 0.07);
+    }
+    .dl-filters { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+    .dl-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button { background: var(--panel); color: var(--muted); border: 0; padding: 7px 14px; cursor: pointer; font-weight: 600; }
+    .seg button + button { border-left: 1px solid var(--border); }
+    .seg button.active { background: var(--panel-2); color: var(--text); }
+    .dl-panels { position: relative; width: 100%; }
+    .dl-panels svg { display: block; width: 100%; }
+    .dl-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--muted); }
+    .dl-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .dl-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .dl-tip {
+      position: fixed; pointer-events: none; display: none; z-index: 20; min-width: 170px; max-width: 280px;
+      background: #0b0f15; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      font-size: 0.75rem; color: var(--text); box-shadow: 0 6px 18px rgba(0,0,0,.45);
+    }
+    .dl-tip .k { color: var(--muted); }
+    .dl-tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+    .postbar { display: grid; grid-template-columns: 80px 1fr 42px; gap: 8px; align-items: center; font-size: 0.8rem; margin: 3px 0; }
+    .postbar .track { height: 8px; background: #0a0d12; border-radius: 4px; overflow: hidden; }
+    .postbar .fill { height: 100%; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -137,6 +165,7 @@
     <button id="nav-overview" class="active" onclick="showMainView('overview')">🏠 Main Overview</button>
     <button id="nav-room" onclick="showMainView('room')">🛋️ Room: Lounge</button>
     <button id="nav-luxie" onclick="showMainView('luxie')">🤖 Luxie Logs &amp; Data</button>
+    <button id="nav-datalab" onclick="showMainView('datalab')">🔬 Data Lab</button>
   </nav>
 
   <main>
@@ -404,6 +433,88 @@
     </section>
 
     <!-- LUXIE LOGS & DATA -->
+    <!-- DATA LAB (Phase 1 · Data): how the system sees the house -->
+    <section id="view-datalab" class="view">
+      <div class="dl-filters">
+        <div class="seg" role="group" aria-label="Time range">
+          <button data-range="today" class="active" onclick="setDlRange('today')">Today</button>
+          <button data-range="week" onclick="setDlRange('week')">Week</button>
+          <button data-range="month" onclick="setDlRange('month')">Month</button>
+        </div>
+        <div class="dl-actions">
+          <label class="inline">Import last <input id="dlDays" type="number" min="1" max="365" value="10" style="width:64px" /> days from HA</label>
+          <button class="btn primary" onclick="dlImport()">Import history</button>
+          <button class="btn" onclick="dlRebuild()">Rebuild</button>
+          <span id="dlStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-bottom:14px;">
+        <div class="card">
+          <div class="row"><h2>How Luxie reads right now</h2><span class="pill info">read-only</span></div>
+          <div id="dlLive"></div>
+        </div>
+        <div class="card">
+          <h2>Coverage</h2>
+          <div id="dlCoverage" class="muted"></div>
+        </div>
+        <div class="card">
+          <h2>Model quality</h2>
+          <div id="dlModel" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row">
+          <h2 id="dlTitle">Timeline</h2>
+          <div id="dlLegend" class="dl-legend"></div>
+        </div>
+        <div class="muted" style="margin-bottom:6px;">Shaded = sun below the horizon. Click the chart twice to pick a time range to label.</div>
+        <div id="dlPanels" class="dl-panels"></div>
+        <details style="margin-top:8px;"><summary class="muted">Table view</summary><div id="dlTable" style="max-height:320px;overflow:auto;"></div></details>
+      </div>
+
+      <div class="grid" style="margin-bottom:14px;">
+        <div class="card">
+          <h2>Light traceback: median brightness by weekday × hour</h2>
+          <div class="muted" style="margin-bottom:6px;">The brightest light in the room, median of every 5 minutes on record. Darker = dimmer.</div>
+          <div id="dlHeat"></div>
+        </div>
+        <div class="card">
+          <h2>Sleep &amp; wake times</h2>
+          <div id="dlSleepStats" class="muted" style="margin-bottom:6px;"></div>
+          <div id="dlSleep"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row"><h2>Discovered states</h2><span id="dlStatesMeta" class="muted"></span></div>
+        <div class="muted" style="margin-bottom:8px;">Found in your data, not configured: each state is a context (time × day × daylight × presence × activity), and under it what every light actually did, including how its brightness shifts with daylight. Name the ones you recognise; names survive rebuilds.</div>
+        <div style="overflow-x:auto;"><table id="dlStates"><thead><tr><th>#</th><th>State</th><th>Usually</th><th>Share</th><th>Intent</th><th>What the lights did</th></tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="grid" style="margin-bottom:14px;">
+        <div class="card">
+          <h2>Label what was really happening</h2>
+          <div class="muted" style="margin-bottom:8px;">Your labels beat the rules and count 5× in training. Click the timeline twice to fill start/end.</div>
+          <div class="controls">
+            <label>Start <input id="dlLabStart" type="datetime-local" /></label>
+            <label>End <input id="dlLabEnd" type="datetime-local" /></label>
+            <label>Intent <select id="dlLabIntent"></select></label>
+            <button class="btn primary" onclick="dlAddLabel()">Add label</button>
+          </div>
+          <div id="dlLabMsg" class="muted" style="margin-top:6px;"></div>
+          <table id="dlLabels" style="margin-top:8px;"><thead><tr><th>From</th><th>To</th><th>Intent</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Intent layering</h2>
+          <div class="muted" style="margin-bottom:6px;">Of the intents that clear their confidence bar, the highest priority wins. Edit <code>intents.yaml</code> to change it.</div>
+          <table id="dlPolicy"><thead><tr><th>Intent</th><th>Priority</th><th>Needs</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div id="dlTip" class="dl-tip" role="tooltip"></div>
+    </section>
+
     <section id="view-luxie" class="view">
       <div class="grid" style="margin-bottom:14px;">
         <div class="card">
@@ -449,6 +560,7 @@
       if (name === "overview") loadOverview();
       if (name === "room") refreshRoom();
       if (name === "luxie") loadLuxie();
+      if (name === "datalab") loadDataLab();
     }
 
     function showRoomTab(sub) {
@@ -1023,6 +1135,351 @@
           `<div class="muted">Weekly rolling median of actual levels per state/hour. Needs ~7 days of Phase 1 data before it means anything.</div>`),
       ].join("");
     }
+
+    // ===================================================================== DATA LAB (Grafana-lite)
+    const DL = { range: "today", series: null, summary: null, pick: [] };
+    const INTENT_ORDER = ["wake", "day", "evening", "nightlight", "sleep", "away"];
+    const cssv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    const intentColor = (i) => i ? cssv(`--i-${i}`) || cssv("--i-away") : "transparent";
+    const seriesColor = (k) => cssv(`--s${(k % 6) + 1}`);
+    const SVGNS = "http://www.w3.org/2000/svg";
+    function el(tag, attrs = {}, parent) {
+      const n = document.createElementNS(SVGNS, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (parent) parent.appendChild(n);
+      return n;
+    }
+    const fmtPct = (v) => v == null ? "—" : `${Math.round(v)}%`;
+    const fmtLux = (v) => v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)}k lx` : `${Math.round(v)} lx`;
+
+    function setDlRange(r) {
+      DL.range = r;
+      document.querySelectorAll(".seg button").forEach(b => b.classList.toggle("active", b.dataset.range === r));
+      loadSeries();
+    }
+
+    async function loadDataLab() {
+      const s = await fetch(`./api/datalab/${ROOM}`).then(r => r.json());
+      DL.summary = s;
+      renderDlSummary(s);
+      await loadSeries();
+    }
+
+    async function loadSeries() {
+      const d = await fetch(`./api/datalab/${ROOM}/series?range=${DL.range}`).then(r => r.json());
+      DL.series = d;
+      renderTimeline(d);
+    }
+
+    async function dlImport() {
+      const days = parseInt(document.getElementById("dlDays").value || "10", 10);
+      const res = await fetch(`./api/datalab/import`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ days }) });
+      const body = await res.json();
+      document.getElementById("dlStatus").textContent = res.ok ? `Importing ${days} days…` : (body.detail || "Import failed");
+      if (res.ok) pollImport();
+    }
+    async function pollImport() {
+      const s = await fetch(`./api/datalab/${ROOM}`).then(r => r.json());
+      const st = s.status || {};
+      document.getElementById("dlStatus").textContent =
+        st.state === "importing" ? "Importing…" : st.state === "done" ? `Imported ${st.history_rows_added} rows (+${st.statistics_rows} hourly lux stats)` :
+        st.state === "error" ? `Import failed: ${st.error}` : "";
+      if (st.state === "importing") setTimeout(pollImport, 2000); else loadDataLab();
+    }
+    async function dlRebuild() {
+      document.getElementById("dlStatus").textContent = "Rebuilding…";
+      const c = await fetch(`./api/datalab/${ROOM}/rebuild`, { method: "POST" }).then(r => r.json());
+      document.getElementById("dlStatus").textContent = `Rebuilt: ${c.slots || 0} slots, ${c.states || 0} states`;
+      loadDataLab();
+    }
+
+    // ---------------------------------------------------------------- summary cards
+    function renderDlSummary(s) {
+      const live = s.live_intent || {};
+      const post = Object.entries(live.posterior || {});
+      document.getElementById("dlLive").innerHTML = live.intent ? `
+        <div style="margin-bottom:6px;"><span class="kpi">${esc(live.intent)}</span>
+          <div class="muted">${esc(live.reason || "")}</div></div>
+        ${live.state ? `<div class="breakdown" style="margin-bottom:8px;"><strong>State #${live.state.id}${live.state.name ? " · " + esc(live.state.name) : ""}</strong><div>${esc(live.state.description)}</div></div>` : ""}
+        ${post.map(([k, p]) => `<div class="postbar"><span>${esc(k)}</span><div class="track"><div class="fill" style="width:${Math.round(p * 100)}%;background:${intentColor(k)}"></div></div><span class="muted">${Math.round(p * 100)}%</span></div>`).join("")}`
+        : `<div class="muted">${esc(live.reason || "No model yet.")} ${s.ha_connected ? "Import history to start." : "Connect Home Assistant, then import history."}</div>`;
+
+      const c = s.coverage || {};
+      const h = s.history || {};
+      document.getElementById("dlCoverage").innerHTML = c.slots ? `
+        <div><strong>${c.days}</strong> days on the grid (${c.first.replace("T", " ")} → ${c.last.replace("T", " ")})</div>
+        <div>${h.rows} raw HA rows from ${h.entities} entities (${Object.entries(h.by_source || {}).map(([k, v]) => `${v} ${k}`).join(", ")})</div>
+        <div style="margin-top:6px;">Missing: ${Object.entries(c.missing_share).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ")}</div>`
+        : "No history yet.";
+
+      const ev = s.evaluation;
+      document.getElementById("dlModel").innerHTML = !ev ? "Not trained yet." : !ev.enough_data ? `Needs more labelled data (${ev.labelled} slots).` : `
+        <div><span class="kpi">${Math.round(ev.accuracy * 100)}%</span> agreement on the newest ${ev.test} slots</div>
+        <div>Time of day alone: ${Math.round(ev.baseline_time_only * 100)}%</div>
+        <div style="margin-top:4px;">${Object.entries(ev.recall).map(([k, v]) => `<span class="tag">${esc(k)} ${Math.round(v * 100)}%</span>`).join("")}</div>
+        <div style="margin-top:6px;color:var(--gold)">${esc(ev.note)}</div>`;
+
+      renderHeatmap(s.traceback?.heatmap_weekday_hour || []);
+      renderSleep(s.sleep_wake || {});
+      renderStates(s.states || {});
+      renderPolicy(s.policy || {});
+      renderLabels(s.labels || [], s.policy || {});
+    }
+
+    function renderPolicy(pol) {
+      document.querySelector("#dlPolicy tbody").innerHTML = Object.entries(pol).sort((a, b) => b[1].priority - a[1].priority)
+        .map(([k, v]) => `<tr><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:${intentColor(k)}"></span>${esc(k)}</td><td>${v.priority}</td><td>${Math.round(v.min_confidence * 100)}%</td></tr>`).join("");
+    }
+
+    function renderLabels(labels, pol) {
+      const sel = document.getElementById("dlLabIntent");
+      if (!sel.options.length) sel.innerHTML = Object.keys(pol).map(k => `<option>${esc(k)}</option>`).join("");
+      document.querySelector("#dlLabels tbody").innerHTML = labels.map(l => `
+        <tr><td>${esc(l.start.replace("T", " "))}</td><td>${esc(l.end.replace("T", " "))}</td><td>${esc(l.intent)}</td>
+        <td><button class="btn danger" onclick="dlDeleteLabel(${l.id})">Remove</button></td></tr>`).join("") ||
+        "<tr><td colspan='4' class='muted'>No labels yet: everything is rule-labelled.</td></tr>";
+    }
+    async function dlAddLabel() {
+      const start = document.getElementById("dlLabStart").value, end = document.getElementById("dlLabEnd").value;
+      const intent = document.getElementById("dlLabIntent").value;
+      const res = await fetch(`./api/datalab/${ROOM}/labels`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ start, end, intent }) });
+      const body = await res.json();
+      document.getElementById("dlLabMsg").textContent = res.ok ? "Saved; model retrained." : (body.detail || "Failed");
+      if (res.ok) loadDataLab();
+    }
+    async function dlDeleteLabel(id) {
+      await fetch(`./api/datalab/${ROOM}/labels/${id}`, { method: "DELETE" });
+      loadDataLab();
+    }
+
+    function renderStates(m) {
+      const meta = document.getElementById("dlStatesMeta");
+      meta.textContent = m.k ? `${m.k} states · silhouette ${m.silhouette}` : (m.reason || "none yet");
+      const SUN = ["night", "twilight", "low", "high"];
+      document.querySelector("#dlStates tbody").innerHTML = (m.states || []).map(st => {
+        const lights = Object.entries(st.lights || {}).filter(([, v]) => v.on_ratio > 0).map(([role, v]) => {
+          const curve = SUN.filter(b => v.by_daylight?.[b] != null).map(b => `${b} ${Math.round(v.by_daylight[b])}%`).join(" → ");
+          return `<div><strong>${esc(role)}</strong> on ${Math.round(v.on_ratio * 100)}% of the time, ~${fmtPct(v.median_when_on)}${v.median_kelvin ? " · " + v.median_kelvin + "K" : ""}${curve ? ` <span class="muted">(${curve})</span>` : ""}</div>`;
+        }).join("") || "<span class='muted'>all off</span>";
+        return `<tr>
+          <td>${st.id}</td>
+          <td><input value="${esc(st.name || "")}" placeholder="name it…" style="width:120px" onchange="dlNameState(${st.id}, this.value)" />
+            <div class="muted" style="margin-top:3px;">${esc(st.description)}</div></td>
+          <td>${hoursSpark(st.hours)}</td>
+          <td>${Math.round(st.share * 100)}%</td>
+          <td>${st.intent ? `<span class="tag" style="color:var(--text);border-color:${intentColor(st.intent)}">${esc(st.intent)}</span> <span class="muted">${Math.round((st.intent_purity || 0) * 100)}%</span>` : "—"}</td>
+          <td style="font-size:.78rem;">${lights}</td></tr>`;
+      }).join("") || `<tr><td colspan="6" class="muted">${esc(m.reason || "Import history to discover states.")}</td></tr>`;
+    }
+    function hoursSpark(hours) {
+      const max = Math.max(1, ...hours);
+      return `<svg width="96" height="22" viewBox="0 0 96 22" role="img" aria-label="hours of day this state occurs">${hours.map((v, h) =>
+        `<rect x="${h * 4}" y="${22 - Math.max(1, (v / max) * 20)}" width="3" height="${Math.max(1, (v / max) * 20)}" rx="1" fill="${cssv("--s1")}" opacity="${v ? 1 : 0.15}"><title>${String(h).padStart(2, "0")}:00 · ${v} slots</title></rect>`).join("")}</svg>`;
+    }
+    async function dlNameState(id, name) {
+      await fetch(`./api/datalab/${ROOM}/states/${id}/name`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ name }) });
+    }
+
+    // ---------------------------------------------------------------- timeline (stacked panels, shared crosshair)
+    function timeTicks(t, range) {
+      const out = [];
+      t.forEach((s, i) => {
+        const hh = +s.slice(11, 13), mm = +s.slice(14, 16), day = +s.slice(8, 10);
+        if (range === "today" && mm === 0 && hh % 3 === 0) out.push([i, `${String(hh).padStart(2, "0")}:00`]);
+        if (range === "week" && hh === 0 && mm === 0) out.push([i, new Date(s).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })]);
+        if (range === "month" && hh === 0 && mm === 0 && day % 3 === 1) out.push([i, new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short" })]);
+      });
+      return out;
+    }
+
+    function renderTimeline(d) {
+      document.getElementById("dlTip").style.display = "none";
+      const host = document.getElementById("dlPanels");
+      host.innerHTML = "";
+      const n = d.t.length;
+      document.getElementById("dlTitle").textContent = `Timeline · ${DL.range} (${d.bucket_minutes}-min buckets)`;
+      if (!n) { host.innerHTML = `<div class="muted" style="padding:20px 0;">No data in this range yet.</div>`; document.getElementById("dlLegend").innerHTML = ""; return; }
+
+      const W = Math.max(320, host.clientWidth), L = 92, R = 12;
+      const roles = Object.keys(d.lights);
+      const zones = Object.keys(d.zones);
+      const stripH = 14, gap = 10;
+      const panels = [
+        { id: "labels", h: stripH * (d.predicted ? 3 : 2) + 4 },
+        { id: "lux", h: 120, title: "Lux (log)" },
+        { id: "bri", h: 140, title: "Brightness" },
+        { id: "pres", h: (2 + zones.length) * 14 + 4 },
+      ];
+      let y = 6;
+      panels.forEach(p => { p.y = y; y += p.h + gap; });
+      const H = y + 18;
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Lighting timeline" }, host);
+      const x = (i) => L + (n === 1 ? 0 : (i * (W - L - R)) / (n - 1));
+      const bw = Math.max(1, (W - L - R) / n);
+      const muted = cssv("--muted"), grid = cssv("--grid");
+
+      // night shading across everything
+      d.sun_elev.forEach((e, i) => { if (e != null && e < 0) el("rect", { x: x(i) - bw / 2, y: 0, width: bw + 0.5, height: H - 18, fill: cssv("--night") }, svg); });
+      // time axis
+      timeTicks(d.t, DL.range).forEach(([i, lab]) => {
+        el("line", { x1: x(i), x2: x(i), y1: 0, y2: H - 18, stroke: grid, "stroke-width": 1 }, svg);
+        const tx = el("text", { x: x(i), y: H - 4, "text-anchor": "middle", fill: muted, "font-size": 10 }, svg); tx.textContent = lab;
+      });
+      const label = (txt, yy) => { const t = el("text", { x: L - 8, y: yy, "text-anchor": "end", fill: muted, "font-size": 10, "dominant-baseline": "middle" }, svg); t.textContent = txt; };
+
+      // 1. intent strips: labelled / system sees / discovered state
+      const lp = panels[0];
+      const strip = (vals, row, name, colorFn) => {
+        const yy = lp.y + row * stripH;
+        label(name, yy + stripH / 2 - 1);
+        vals.forEach((v, i) => { if (v != null) el("rect", { x: x(i) - bw / 2, y: yy, width: Math.max(1, bw - (bw > 4 ? 1 : 0)), height: stripH - 3, fill: colorFn(v), rx: bw > 6 ? 2 : 0 }, svg); });
+      };
+      strip(d.intent, 0, "labelled", intentColor);
+      if (d.predicted) strip(d.predicted, 1, "system sees", intentColor);
+      const stInt = {}; (DL.summary?.states?.states || []).forEach(s => stInt[s.id] = s.intent);
+      strip(d.state, d.predicted ? 2 : 1, "state #", v => intentColor(stInt[v]));
+
+      // 2. lux panel, log scale
+      const xp = panels[1];
+      const luxVals = [...d.lux_in, ...d.lux_out].filter(v => v != null && v > 0);
+      const top = Math.max(10, ...luxVals);
+      const lmax = Math.ceil(Math.log10(top)), ly = (v) => xp.y + xp.h - (Math.log10(Math.max(1, v)) / lmax) * xp.h;
+      for (let k = 0; k <= lmax; k++) {
+        el("line", { x1: L, x2: W - R, y1: ly(10 ** k), y2: ly(10 ** k), stroke: grid, "stroke-width": 1 }, svg);
+        label(k === 0 ? "1 lx" : 10 ** k >= 1000 ? `${10 ** (k - 3)}k` : `${10 ** k}`, ly(10 ** k));
+      }
+      const line = (vals, yf, color, dash) => {
+        let dstr = "", pen = false;
+        vals.forEach((v, i) => { if (v == null) { pen = false; return; } dstr += `${pen ? "L" : "M"}${x(i).toFixed(1)},${yf(v).toFixed(1)}`; pen = true; });
+        if (dstr) el("path", { d: dstr, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...(dash ? { "stroke-dasharray": "5 4" } : {}) }, svg);
+      };
+      // Lux is drawn in neutral ink (solid = indoor, dashed = outdoor) so it never borrows a light's colour
+      line(d.lux_in, ly, cssv("--text"));
+      line(d.lux_out, ly, cssv("--muted"), true);
+
+      // 3. brightness per role, 0-100 %
+      const bp = panels[2], by = (v) => bp.y + bp.h - (v / 100) * bp.h;
+      [0, 50, 100].forEach(v => { el("line", { x1: L, x2: W - R, y1: by(v), y2: by(v), stroke: grid, "stroke-width": 1 }, svg); label(`${v}%`, by(v)); });
+      roles.forEach((r, k) => line(d.lights[r], by, seriesColor(k)));
+
+      // 4. presence / TV / zones state rows
+      const pp = panels[3];
+      const rows = [["occupied", d.occupied], ["TV", d.media], ...zones.map(z => [z, d.zones[z]])];
+      rows.forEach(([name, vals], r) => {
+        const yy = pp.y + r * 14;
+        label(name, yy + 5);
+        vals.forEach((v, i) => { if (v) el("rect", { x: x(i) - bw / 2, y: yy, width: Math.max(1, bw), height: 10, fill: cssv("--text"), opacity: 0.55 }, svg); });
+      });
+
+      // legend (entities, not ranks: same role always keeps its colour)
+      document.getElementById("dlLegend").innerHTML =
+        `<span><strong>Intent</strong></span>` + INTENT_ORDER.map(i => `<span><i style="background:${intentColor(i)}"></i>${i}</span>`).join("") +
+        `<span style="margin-left:8px;"><strong>Lux</strong></span><span><i style="background:${cssv("--text")};height:2px"></i>indoor</span><span><i style="background:repeating-linear-gradient(90deg,${cssv("--muted")} 0 4px,transparent 4px 7px);height:2px"></i>outdoor</span>` +
+        `<span style="margin-left:8px;"><strong>Lights</strong></span>` + roles.map((r, k) => `<span><i style="background:${seriesColor(k)}"></i>${esc(r)}</span>`).join("");
+
+      // crosshair + tooltip + click-to-pick label range
+      const cross = el("line", { y1: 0, y2: H - 18, stroke: cssv("--text"), "stroke-width": 1, opacity: 0, "pointer-events": "none" }, svg);
+      const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H - 18, fill: "transparent", style: "cursor:crosshair" }, svg);
+      const tip = document.getElementById("dlTip");
+      const idxAt = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const px = (ev.clientX - r.left) * (W / r.width);
+        return Math.max(0, Math.min(n - 1, Math.round(((px - L) / (W - L - R)) * (n - 1))));
+      };
+      hit.addEventListener("mousemove", (ev) => {
+        const i = idxAt(ev);
+        cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("opacity", 0.5);
+        const st = (DL.summary?.states?.states || []).find(s => s.id === d.state[i]);
+        tip.innerHTML = `<div><strong>${esc(d.t[i].replace("T", " "))}</strong></div>
+          <div><span class="sw" style="background:${intentColor(d.intent[i])}"></span><span class="k">labelled</span> ${esc(d.intent[i] || "—")}</div>
+          ${d.predicted ? `<div><span class="sw" style="background:${intentColor(d.predicted[i])}"></span><span class="k">system sees</span> ${esc(d.predicted[i] || "—")} ${d.confidence[i] ? Math.round(d.confidence[i] * 100) + "%" : ""}</div>` : ""}
+          ${st ? `<div><span class="k">state #${st.id}</span> ${esc(st.name || st.description)}</div>` : ""}
+          <div><span class="k">lux</span> in ${fmtLux(d.lux_in[i])} · out ${fmtLux(d.lux_out[i])} · sun ${d.sun_elev[i] == null ? "—" : Math.round(d.sun_elev[i]) + "°"}</div>
+          ${roles.map((r, k) => `<div><span class="sw" style="background:${seriesColor(k)}"></span>${esc(r)} ${fmtPct(d.lights[r][i])}</div>`).join("")}
+          <div><span class="k">present</span> ${d.occupied[i] == null ? "—" : d.occupied[i] ? "yes" : "no"} · <span class="k">TV</span> ${d.media[i] ? "on" : "off"}${zones.filter(z => d.zones[z][i]).map(z => " · " + esc(z)).join("")}</div>`;
+        tip.style.display = "block";
+        const tw = tip.offsetWidth;
+        tip.style.left = `${Math.min(window.innerWidth - tw - 8, ev.clientX + 14)}px`;
+        tip.style.top = `${ev.clientY + 14}px`;
+      });
+      hit.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("opacity", 0); });
+      hit.addEventListener("click", (ev) => {
+        const t = d.t[idxAt(ev)];
+        DL.pick = DL.pick.length >= 2 ? [t] : [...DL.pick, t];
+        const [a, b] = [...DL.pick].sort();
+        document.getElementById("dlLabStart").value = a;
+        if (b) document.getElementById("dlLabEnd").value = b;
+        document.getElementById("dlLabMsg").textContent = b ? "Range picked: choose an intent and add it." : "Start picked: click again for the end.";
+      });
+
+      // table view (accessibility / exact values)
+      document.getElementById("dlTable").innerHTML = `<table><thead><tr><th>Time</th><th>Label</th><th>Sees</th><th>State</th><th>Lux in</th><th>Lux out</th>${roles.map(r => `<th>${esc(r)}</th>`).join("")}<th>Present</th><th>TV</th></tr></thead><tbody>${
+        d.t.map((t, i) => `<tr><td>${t.replace("T", " ")}</td><td>${d.intent[i] || ""}</td><td>${d.predicted ? d.predicted[i] || "" : ""}</td><td>${d.state[i] ?? ""}</td><td>${fmtLux(d.lux_in[i])}</td><td>${fmtLux(d.lux_out[i])}</td>${roles.map(r => `<td>${fmtPct(d.lights[r][i])}</td>`).join("")}<td>${d.occupied[i] ?? ""}</td><td>${d.media[i] ?? ""}</td></tr>`).join("")}</tbody></table>`;
+    }
+
+    // ---------------------------------------------------------------- heatmap: weekday x hour, sequential blue
+    function renderHeatmap(grid) {
+      const host = document.getElementById("dlHeat");
+      if (!grid.length || grid.every(r => r.every(v => v == null))) { host.innerHTML = "<div class='muted'>No light history yet.</div>"; return; }
+      const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+      const W = Math.max(320, host.clientWidth), L = 34, cw = (W - L) / 24, ch = 18, H = 7 * ch + 18;
+      const lo = [0x18, 0x4f, 0x95], hi = [0xb7, 0xd3, 0xf6];
+      const col = (v) => `rgb(${lo.map((c, k) => Math.round(c + (hi[k] - c) * (v / 100))).join(",")})`;
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Median brightness by weekday and hour" }, host);
+      const tip = document.getElementById("dlTip");
+      grid.forEach((row, d) => {
+        const t = el("text", { x: L - 6, y: d * ch + ch / 2, "text-anchor": "end", "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = days[d];
+        row.forEach((v, h) => {
+          const r = el("rect", { x: L + h * cw + 1, y: d * ch + 1, width: cw - 2, height: ch - 2, rx: 3, fill: v == null ? cssv("--panel-2") : col(v) }, svg);
+          r.addEventListener("mousemove", (ev) => {
+            tip.innerHTML = `<strong>${days[d]} ${String(h).padStart(2, "0")}:00</strong><div>${v == null ? "no data" : "median " + Math.round(v) + "% (brightest light)"}</div>`;
+            tip.style.display = "block"; tip.style.left = `${ev.clientX + 14}px`; tip.style.top = `${ev.clientY + 14}px`;
+          });
+          r.addEventListener("mouseleave", () => tip.style.display = "none");
+        });
+      });
+      [0, 6, 12, 18].forEach(h => { const t = el("text", { x: L + h * cw + 2, y: H - 4, fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = `${String(h).padStart(2, "0")}:00`; });
+    }
+
+    // ---------------------------------------------------------------- sleep & wake dots per night
+    function renderSleep(sw) {
+      const host = document.getElementById("dlSleep");
+      const nights = sw.nights || [];
+      const st = (k) => ["weekday", "weekend"].map(dt => sw[k]?.[dt] ? `${dt} ${sw[k][dt].median} (${sw[k][dt].p10}–${sw[k][dt].p90})` : null).filter(Boolean).join(" · ") || "—";
+      document.getElementById("dlSleepStats").innerHTML = `<div><strong>Wake</strong> ${st("wake")}</div><div><strong>Sleep</strong> ${st("sleep")}</div>`;
+      if (!nights.length) { host.innerHTML = "<div class='muted'>No nights detected yet.</div>"; return; }
+      const W = Math.max(320, host.clientWidth), L = 44, R = 10, H = 170, top = 8, bot = 22;
+      const toY = (hhmm) => { let [h, m] = hhmm.split(":").map(Number); let v = h * 60 + m - 20 * 60; if (v < 0) v += 1440; return top + (v / (16 * 60)) * (H - top - bot); };
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Sleep and wake time per night" }, host);
+      ["20:00", "00:00", "04:00", "08:00", "12:00"].forEach(lab => {
+        el("line", { x1: L, x2: W - R, y1: toY(lab), y2: toY(lab), stroke: cssv("--grid") }, svg);
+        const t = el("text", { x: L - 6, y: toY(lab), "text-anchor": "end", "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = lab;
+      });
+      const x = (i) => L + (nights.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (nights.length - 1));
+      const tip = document.getElementById("dlTip");
+      nights.forEach((nt, i) => {
+        const pts = [["sleep", nt.sleep_at], ["wake", nt.wake_at]].filter(p => p[1]);
+        if (pts.length === 2) el("line", { x1: x(i), x2: x(i), y1: toY(pts[0][1]), y2: toY(pts[1][1]), stroke: cssv("--grid"), "stroke-width": 2 }, svg);
+        pts.forEach(([kind, t]) => {
+          const c = el("circle", { cx: x(i), cy: toY(t), r: 4.5, fill: intentColor(kind), stroke: cssv("--panel"), "stroke-width": 2 }, svg);
+          c.addEventListener("mousemove", (ev) => {
+            tip.innerHTML = `<strong>${esc(nt.date)}</strong> (${nt.daytype})<div>${kind} ${t}</div><div class="k">${nt.hours} h asleep</div>`;
+            tip.style.display = "block"; tip.style.left = `${ev.clientX + 14}px`; tip.style.top = `${ev.clientY + 14}px`;
+          });
+          c.addEventListener("mouseleave", () => tip.style.display = "none");
+        });
+        if (i % Math.ceil(nights.length / 8) === 0) { const t = el("text", { x: x(i), y: H - 6, "text-anchor": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = nt.date.slice(5); }
+      });
+      const lg = el("g", {}, svg);
+      [["sleep", 0], ["wake", 60]].forEach(([k, dx]) => {
+        el("circle", { cx: W - R - 110 + dx, cy: top + 6, r: 4.5, fill: intentColor(k) }, lg);
+        const t = el("text", { x: W - R - 102 + dx, y: top + 6, "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, lg); t.textContent = k;
+      });
+    }
+    window.addEventListener("scroll", () => { const t = document.getElementById("dlTip"); if (t) t.style.display = "none"; }, { passive: true });
+    window.addEventListener("resize", () => { if (document.getElementById("view-datalab").classList.contains("active") && DL.series) { renderTimeline(DL.series); renderDlSummary(DL.summary); } });
 
     loadOverview();
   </script>

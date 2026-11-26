@@ -197,6 +197,48 @@ class LuxieStore:
                 kbps REAL NOT NULL,
                 PRIMARY KEY (minute, host)
             );
+            -- Phase 1 traceback: raw HA state history (imported from the recorder, then captured live)
+            CREATE TABLE IF NOT EXISTS ha_history (
+                entity_id TEXT NOT NULL,
+                ts TEXT NOT NULL,
+                state TEXT NOT NULL,
+                attrs_json TEXT,
+                source TEXT NOT NULL DEFAULT 'import',
+                PRIMARY KEY (entity_id, ts)
+            );
+            -- HA long-term statistics (hourly) for numeric sensors, e.g. indoor/outdoor lux
+            CREATE TABLE IF NOT EXISTS lts_hourly (
+                statistic_id TEXT NOT NULL,
+                hour_ts TEXT NOT NULL,
+                mean REAL, min REAL, max REAL,
+                PRIMARY KEY (statistic_id, hour_ts)
+            );
+            -- The 5-minute grid (rebuilt from ha_history) with intent labels
+            CREATE TABLE IF NOT EXISTS slots (
+                room TEXT NOT NULL,
+                slot TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                intent TEXT,
+                intent_source TEXT,
+                PRIMARY KEY (room, slot)
+            );
+            -- Your ground-truth labels: [start, end) local time ranges
+            CREATE TABLE IF NOT EXISTS intent_labels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room TEXT NOT NULL,
+                start TEXT NOT NULL,
+                end TEXT NOT NULL,
+                intent TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS model_cache (
+                room TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                built_at TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                PRIMARY KEY (room, kind)
+            );
+
             -- Device <-> zone links you accepted (or rejected) from the learned proposals
             CREATE TABLE IF NOT EXISTS learned_signals (
                 room TEXT NOT NULL,
@@ -747,6 +789,98 @@ class LuxieStore:
                 "median_kelvin": med(c["k"]),
             })
         return {"days": days, "sample_rows": len(rows), "profile": out}
+
+    # ------------------------------------------------------------------ Phase 1 traceback storage
+
+    def store_history(self, rows: list[tuple[str, str, str, str]], source: str = "import") -> int:
+        cur = self._conn.executemany(
+            "INSERT OR IGNORE INTO ha_history (entity_id, ts, state, attrs_json, source) VALUES (?, ?, ?, ?, ?)",
+            [(*r, source) for r in rows],
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def load_history(self, entity_ids: list[str], since_iso: str | None = None) -> dict[str, list[tuple[str, str, str]]]:
+        """Per entity: rows from the last state *before* since_iso (so the step function starts right) onward."""
+        out: dict[str, list[tuple[str, str, str]]] = {}
+        for e in entity_ids:
+            rows = []
+            if since_iso:
+                prev = self._conn.execute(
+                    "SELECT ts, state, attrs_json FROM ha_history WHERE entity_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+                    (e, since_iso),
+                ).fetchone()
+                if prev:
+                    rows.append(tuple(prev))
+                rows += [tuple(r) for r in self._conn.execute(
+                    "SELECT ts, state, attrs_json FROM ha_history WHERE entity_id = ? AND ts >= ? ORDER BY ts", (e, since_iso))]
+            else:
+                rows = [tuple(r) for r in self._conn.execute(
+                    "SELECT ts, state, attrs_json FROM ha_history WHERE entity_id = ? ORDER BY ts", (e,))]
+            out[e] = rows
+        return out
+
+    def history_span(self) -> dict[str, Any]:
+        r = self._conn.execute("SELECT MIN(ts), MAX(ts), COUNT(*) FROM ha_history").fetchone()
+        by_src = {row[0]: row[1] for row in self._conn.execute("SELECT source, COUNT(*) FROM ha_history GROUP BY source")}
+        return {"first": r[0], "last": r[1], "rows": r[2], "by_source": by_src,
+                "entities": self._conn.execute("SELECT COUNT(DISTINCT entity_id) FROM ha_history").fetchone()[0]}
+
+    def store_statistics(self, rows: list[tuple[str, str, Any, Any, Any]]) -> int:
+        cur = self._conn.executemany(
+            """INSERT INTO lts_hourly (statistic_id, hour_ts, mean, min, max) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(statistic_id, hour_ts) DO UPDATE SET mean = excluded.mean, min = excluded.min, max = excluded.max""",
+            rows,
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def load_statistics(self, statistic_ids: list[str]) -> list[dict[str, Any]]:
+        if not statistic_ids:
+            return []
+        q = f"SELECT * FROM lts_hourly WHERE statistic_id IN ({','.join('?' * len(statistic_ids))}) ORDER BY hour_ts"
+        return [dict(r) for r in self._conn.execute(q, statistic_ids).fetchall()]
+
+    def replace_slots(self, room: str, slots: list[dict[str, Any]]) -> None:
+        self._conn.execute("DELETE FROM slots WHERE room = ?", (room,))
+        self._conn.executemany(
+            "INSERT INTO slots (room, slot, data_json, intent, intent_source) VALUES (?, ?, ?, ?, ?)",
+            [(room, s["slot"], json.dumps({k: v for k, v in s.items() if not k.startswith("_")}),
+              s.get("intent"), s.get("intent_source")) for s in slots],
+        )
+        self._conn.commit()
+
+    def load_slots(self, room: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT data_json FROM slots WHERE room = ? ORDER BY slot", (room,)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def add_intent_label(self, room: str, start: str, end: str, intent: str) -> None:
+        self._conn.execute(
+            "INSERT INTO intent_labels (room, start, end, intent, created_at) VALUES (?, ?, ?, ?, ?)",
+            (room, start, end, intent, _utc_iso()),
+        )
+        self._conn.commit()
+
+    def get_intent_labels(self, room: str) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT * FROM intent_labels WHERE room = ? ORDER BY start", (room,)).fetchall()]
+
+    def delete_intent_label(self, room: str, label_id: int) -> None:
+        self._conn.execute("DELETE FROM intent_labels WHERE room = ? AND id = ?", (room, label_id))
+        self._conn.commit()
+
+    def save_model(self, room: str, kind: str, data_json: str) -> None:
+        self._conn.execute(
+            """INSERT INTO model_cache (room, kind, built_at, data_json) VALUES (?, ?, ?, ?)
+               ON CONFLICT(room, kind) DO UPDATE SET built_at = excluded.built_at, data_json = excluded.data_json""",
+            (room, kind, _utc_iso(), data_json),
+        )
+        self._conn.commit()
+
+    def load_model(self, room: str, kind: str) -> tuple[str, str] | None:
+        r = self._conn.execute("SELECT built_at, data_json FROM model_cache WHERE room = ? AND kind = ?",
+                               (room, kind)).fetchone()
+        return (r[0], r[1]) if r else None
 
     # ------------------------------------------------------------------ device <-> zone learning
 

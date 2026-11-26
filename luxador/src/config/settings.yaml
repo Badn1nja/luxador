@@ -7,6 +7,12 @@ host: "0.0.0.0"
 port: 8099
 presence_settle_seconds: 45   # a presence pattern must hold this long before it counts (kills flicker)
 
+# Phase 1 · Data (house-wide inputs for the 5-minute grid and the intent model)
+outdoor_lux_sensor: ""        # e.g. sensor.garden_illuminance (optional; sun elevation is used either way)
+sun_entity: sun.sun
+time_zone: ""                 # blank = Home Assistant's own time zone
+max_states: 28                # most states Luxie may discover from your data (fewer if the data does not support them)
+
 # OPNsense network signals (laptop online / actively moving data). API key needs
 # 'Diagnostics: ARP Table' + 'Reporting: Traffic' privileges. Prefer env vars for the secret:
 # LUXADOR_OPNSENSE_URL / LUXADOR_OPNSENSE_KEY / LUXADOR_OPNSENSE_SECRET
