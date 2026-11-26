@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -29,20 +31,62 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("luxador.main")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = Path(os.environ.get("LUXADOR_CONFIG_DIR", str(BASE_DIR / "config")))
 WEB_DIR = BASE_DIR / "web"
+
+# Running as a Home Assistant app (add-on): Supervisor writes the Configuration-tab options here,
+# mounts the app's own config folder at /config (addon_configs/<slug> on the host) and persistent
+# storage at /data.
+HA_OPTIONS_PATH = Path(os.environ.get("LUXADOR_HA_OPTIONS", "/data/options.json"))
+IS_HA_APP = HA_OPTIONS_PATH.exists()
+CONFIG_DIR = Path(os.environ.get("LUXADOR_CONFIG_DIR", "/config" if IS_HA_APP else str(BASE_DIR / "config")))
+DEFAULT_CONFIG_DIR = BASE_DIR / "default_config"
+
+
+def _seed_config_dir() -> None:
+    """First start as an HA app: copy the example rooms/schemas/settings into the app's config folder."""
+    if not DEFAULT_CONFIG_DIR.exists():
+        return
+    for src in DEFAULT_CONFIG_DIR.rglob("*"):
+        dst = CONFIG_DIR / src.relative_to(DEFAULT_CONFIG_DIR)
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+        elif not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            logger.info("Seeded default config %s", dst)
+
+
+def _ha_options() -> dict[str, Any]:
+    if not IS_HA_APP:
+        return {}
+    try:
+        return json.loads(HA_OPTIONS_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        logger.warning("Could not read %s: %s", HA_OPTIONS_PATH, exc)
+        return {}
 
 
 def _load_settings() -> dict[str, Any]:
     path = CONFIG_DIR / "settings.yaml"
     data = (yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}) or {}
-    opn = data.get("opnsense") or {}
+    opn = dict(data.get("opnsense") or {})
+    ha_opts = _ha_options()
+    if ha_opts:
+        # The HA Configuration tab wins over settings.yaml for the things it exposes
+        for key in ("dry_run", "tick_seconds"):
+            if key in ha_opts:
+                data[key] = ha_opts[key]
+        for opt_key, key in (("opnsense_url", "url"), ("opnsense_api_key", "api_key"),
+                             ("opnsense_api_secret", "api_secret"), ("opnsense_verify_ssl", "verify_ssl")):
+            if ha_opts.get(opt_key) not in (None, ""):
+                opn[key] = ha_opts[opt_key]
+    default_db = "/data/luxie.db" if IS_HA_APP else str(BASE_DIR / data.get("db_path", "data/luxie.db"))
     return {
         "ha_url": os.environ.get("LUXADOR_HA_URL", data.get("ha_url", "")),
         "ha_token": os.environ.get("LUXADOR_HA_TOKEN", data.get("ha_token", "")),
         "dry_run": os.environ.get("LUXADOR_DRY_RUN", str(data.get("dry_run", True))).lower() == "true",
         "tick_seconds": int(os.environ.get("LUXADOR_TICK_SECONDS", data.get("tick_seconds", 5))),
-        "db_path": os.environ.get("LUXADOR_DB_PATH", str(BASE_DIR / data.get("db_path", "data/luxie.db"))),
+        "db_path": os.environ.get("LUXADOR_DB_PATH", default_db),
         "host": data.get("host", "0.0.0.0"),
         "port": int(os.environ.get("LUXADOR_PORT", data.get("port", 8099))),
         "presence_settle_seconds": float(data.get("presence_settle_seconds", 45)),
@@ -62,6 +106,8 @@ class EngineRuntime:
     """Holds live loaded configs, active punches, Luxie DB, and HA bridge."""
 
     def __init__(self) -> None:
+        if IS_HA_APP:
+            _seed_config_dir()
         self.settings = _load_settings()
         self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
         self.luxie = LuxieStore(self.settings["db_path"])

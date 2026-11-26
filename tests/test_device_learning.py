@@ -47,7 +47,7 @@ def test_accepted_device_becomes_zone_signal(tmp_path, monkeypatch):
 
     cfg_dst = tmp_path / "config"
     (cfg_dst / "rooms").mkdir(parents=True)
-    src = Path(__file__).resolve().parent.parent / "config"
+    src = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
     for f in ("settings.yaml", "schemas.yaml"):
         (cfg_dst / f).write_text((src / f).read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "rooms" / "lounge.yaml").write_text((src / "rooms" / "lounge.yaml").read_text(encoding="utf-8"), encoding="utf-8")

@@ -5,19 +5,38 @@
 A systemic, YAML-driven Home Assistant lighting controller + live HTTP sandbox & telemetry engine:
 
 - **El Luxador (Core Engine):** Compiles compact `ROLE :: TIME :: BRIGHTNESS/LUX :: SCHEMA` YAML maps into a deterministic layer stack with closed-loop `target_lux`, event time-warping (e.g. TV on early pulls wind-down forward), and decaying "punching-bag" manual overrides.
-- **Luxie (Sidekick Telemetry & Learning):** SQLite 3-tier data pipeline (raw -> clean hourly -> yearly seasonal baselines), causal audit logs (*"Why am I at 70%?"*), lux sensor drift alerts, empirical bulb lux-gain calibration, and human-confirmed state tracking.
+- **Luxie (Sidekick Telemetry & Learning):** SQLite data pipeline (raw -> clean hourly -> yearly seasonal baselines), presence pattern learning, device-to-zone learning, causal audit logs (*"Why am I at 70%?"*) and lux sensor drift alerts.
+
+## Install as a Home Assistant app
+
+1. **Settings > Apps > App store > ⋮ > Repositories**, add `https://github.com/Badn1nja/luxador`.
+2. Install **El Luxador & Luxie**, start it, and open **Luxador** from the sidebar.
+3. It starts in dry run. Edit your rooms in `/addon_configs/<id>_luxador/rooms/` (see the app's Documentation tab).
+
+## Repository layout
+
+```
+repository.yaml          # makes this repo a Home Assistant app repository
+luxador/                 # the app (HA builds from this folder)
+  config.yaml  Dockerfile  DOCS.md  requirements.txt
+  src/luxador/           # Python package
+  src/web/               # UI
+  src/config/            # example config, copied to the app's config folder on first start
+tests/                   # pytest suite (run from repo root)
+```
 
 ## Quick Start (Local Windows / Dev Mode)
 
 ```powershell
 cd C:\Users\KWN\Projects\luxador
+$env:PYTHONPATH = "luxador/src"
 .\.venv\Scripts\python.exe -m luxador.main
 ```
 
 Open **http://127.0.0.1:8099** to explore the Live Debugger, 24h Curve & Event Simulator, YAML Map Studio, and Luxie Data Lab.
 
-### Connecting to Live Home Assistant
-Edit `config/settings.yaml` or set environment variables:
+### Connecting to Live Home Assistant (dev mode)
+Inside HA as an app this is automatic. For local dev, edit `luxador/src/config/settings.yaml` or set environment variables:
 - `LUXADOR_HA_URL="https://ha.example.com"` (or `http://homeassistant.local:8123`)
 - `LUXADOR_HA_TOKEN="<long-lived-access-token>"`
 - `LUXADOR_DRY_RUN="true"` (logs intended bulb changes without touching physical lights until you're ready!)

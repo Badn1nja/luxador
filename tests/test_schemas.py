@@ -8,7 +8,7 @@ from luxador.schemas import evaluate_schema
 
 
 def _load_default_schemas():
-    p = Path(__file__).resolve().parent.parent / "config" / "schemas.yaml"
+    p = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config" / "schemas.yaml"
     return load_schemas_yaml(p.read_text(encoding="utf-8"))
 
 

@@ -10,7 +10,7 @@ from luxador.resolver import resolve_room, simulate_day
 
 
 def _bundle():
-    return load_config_bundle(Path(__file__).resolve().parent.parent / "config")
+    return load_config_bundle(Path(__file__).resolve().parent.parent / "luxador" / "src" / "config")
 
 
 def test_target_lux_dims_when_daylight_high():

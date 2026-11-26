@@ -42,7 +42,7 @@ def test_invalid_rule_raises():
 
 
 def test_load_lounge_config_bundle():
-    cfg_dir = Path(__file__).resolve().parent.parent / "config"
+    cfg_dir = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
     schemas, rooms = load_config_bundle(cfg_dir)
     assert "sun" in schemas and "tv_vivid" in schemas
     assert "lounge" in rooms

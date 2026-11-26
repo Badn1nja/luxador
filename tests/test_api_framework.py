@@ -11,7 +11,7 @@ def test_overview_and_rule_tweaks_roundtrip(tmp_path, monkeypatch):
     cfg_dst = tmp_path / "config"
     cfg_dst.mkdir()
     (cfg_dst / "rooms").mkdir()
-    src_cfg = Path(__file__).resolve().parent.parent / "config"
+    src_cfg = Path(__file__).resolve().parent.parent / "luxador" / "src" / "config"
     (cfg_dst / "settings.yaml").write_text((src_cfg / "settings.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "schemas.yaml").write_text((src_cfg / "schemas.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     (cfg_dst / "rooms" / "lounge.yaml").write_text(
