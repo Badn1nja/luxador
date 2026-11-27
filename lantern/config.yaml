@@ -1,5 +1,5 @@
 name: Lantern
-version: "0.9.0"
+version: "0.10.0"
 slug: lantern
 description: Lights that follow presence and darkness, learned from your house. Echo remembers, Luxie learns, Flint lights.
 url: https://github.com/Badn1nja/luxador
