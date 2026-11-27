@@ -407,9 +407,17 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;">
-        <div class="row"><h2>The grid</h2><span class="muted">what each light does, by darkness × where you are</span></div>
-        <div id="stdGrid" style="overflow-x:auto;"></div>
+        <div class="row"><h2>Your day</h2><span class="muted">sun, room brightness, sleep gate and what Flint sets: one 24 h picture</span></div>
+        <div class="legend" id="dayLegend" style="margin:6px 0;"></div>
+        <div id="dayReadout" class="muted" style="min-height:1.3em;font-size:.82rem;"></div>
+        <div id="dayChart" style="width:100%;"></div>
+        <div class="muted" id="dayNote" style="margin-top:4px;font-size:.78rem;"></div>
       </div>
+
+      <details class="card" style="margin-bottom:14px;">
+        <summary>The grid <span class="muted" style="font-weight:400">(every light by darkness × where you are, right now)</span></summary>
+        <div id="stdGrid" style="overflow-x:auto;margin-top:8px;"></div>
+      </details>
 
       <details class="card" id="swInsights" ontoggle="if (this.open) loadSwitch(false)">
         <summary>Learned patterns <span class="muted" style="font-weight:400">(under the hood: what Luxie found in your history; pin or merge here)</span></summary>
@@ -1176,10 +1184,12 @@
 
     async function refreshStdLive() {
       renderCurveChart();
-      const [st, grid] = await Promise.all([
+      const [st, grid, day] = await Promise.all([
         fetch(`./api/rooms/${ROOM}/state`).then(r => r.json()),
         fetch(`./api/rooms/${ROOM}/grid`).then(r => r.ok ? r.json() : null),
+        fetch(`./api/rooms/${ROOM}/day`).then(r => r.ok ? r.json() : null),
       ]);
+      renderDay(day);
       STD.state = st;
       renderCurveChart();
       renderTrace(st);
@@ -1334,6 +1344,66 @@
           <span style="float:right">${r.hands_off ? "hands off" : r.on ? r.brightness_pct + "%" : "off"}</span>
           <div class="std-trace">${steps}</div></div>`;
       }).join("");
+    }
+
+
+    // ---------------------------------------------------------------- your day (one chart)
+    const DAY_SERIES = [
+      { key: "sun", label: "Sun", color: "--s3", fmt: (p) => p.sun_elev == null ? "—" : `${p.sun_elev.toFixed(0)}° high` },
+      { key: "room_lux_pct", label: "Room brightness", color: "--s4", fmt: (p) => p.room_lux == null ? "no data" : `${p.room_lux} lx typical` },
+      { key: "gate", label: "Sleep gate", color: "--red", fmt: (p) => p.gate >= 50 ? "closed (night cap)" : p.gate > 5 ? "easing" : "open" },
+      { key: "light", label: "Flint sets", color: "--s1", fmt: (p) => p.light == null ? "—" : `${Math.round(p.light)}% if you're in` },
+    ];
+    function renderDay(d) {
+      const host = document.getElementById("dayChart");
+      if (!host) return;
+      document.getElementById("dayLegend").innerHTML = DAY_SERIES.map(sr => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:14px;font-size:.82rem;"><i style="width:14px;height:3px;border-radius:2px;background:${cssv(sr.color)}"></i>${sr.label}</span>`).join("");
+      if (!d) { host.innerHTML = `<div class="muted">The day chart needs a valid house model.</div>`; return; }
+      const pts = d.points;
+      const W = Math.max(300, host.clientWidth), H = 230, L = 36, R = 10, T = 10, B = 26;
+      const xs = (m) => L + (m / 1440) * (W - L - R);
+      const ys = (v) => T + (1 - v / 100) * (H - T - B);
+      host.innerHTML = "";
+      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "24 hour chart: sun, room brightness, sleep gate and Flint's level" }, host);
+      [0, 50, 100].forEach(v => {
+        el("line", { x1: L, x2: W - R, y1: ys(v), y2: ys(v), stroke: cssv("--grid") }, svg);
+        const t = el("text", { x: L - 6, y: ys(v), "text-anchor": "end", "dominant-baseline": "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = `${v}%`;
+      });
+      [0, 3, 6, 9, 12, 15, 18, 21, 24].forEach(h => {
+        const t = el("text", { x: xs(h * 60), y: H - 8, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle", fill: cssv("--muted"), "font-size": 10 }, svg); t.textContent = `${String(h % 24).padStart(2, "0")}:00`;
+      });
+      const line = (key, color, width) => {
+        let dstr = "", pen = false;
+        pts.forEach(p => {
+          if (p[key] == null) { pen = false; return; }
+          dstr += `${pen ? "L" : "M"}${xs(p.minute).toFixed(1)},${ys(p[key]).toFixed(1)}`;
+          pen = true;
+        });
+        if (dstr) el("path", { d: dstr, fill: "none", stroke: cssv(color), "stroke-width": width, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      };
+      DAY_SERIES.forEach(sr => line(sr.key, sr.color, sr.key === "light" ? 3 : 2.2));
+      const nowX = xs(d.now_minute);
+      el("line", { x1: nowX, x2: nowX, y1: T, y2: H - B, stroke: cssv("--text"), "stroke-dasharray": "3 3", opacity: 0.55 }, svg);
+      const nt = el("text", { x: nowX + (d.now_minute > 1200 ? -4 : 4), y: T + 9, "text-anchor": d.now_minute > 1200 ? "end" : "start", fill: cssv("--muted"), "font-size": 10 }, svg); nt.textContent = "now";
+      const cross = el("line", { x1: 0, x2: 0, y1: T, y2: H - B, stroke: cssv("--muted"), visibility: "hidden" }, svg);
+      const readout = document.getElementById("dayReadout");
+      const show = (p) => { readout.innerHTML = `<strong style="color:var(--text)">${p.t}</strong> · ` + DAY_SERIES.map(sr => `<span style="color:${cssv(sr.color)}">${sr.label}</span> ${sr.fmt(p)}`).join(" · "); };
+      const nowPt = pts.reduce((b, p) => Math.abs(p.minute - d.now_minute) < Math.abs(b.minute - d.now_minute) ? p : b, pts[0]);
+      show(nowPt);
+      const hit = el("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" }, svg);
+      const move = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const m = Math.max(0, Math.min(1439, ((ev.clientX - r.left) / r.width * W - L) / (W - L - R) * 1440));
+        const p = pts.reduce((b, q) => Math.abs(q.minute - m) < Math.abs(b.minute - m) ? q : b, pts[0]);
+        cross.setAttribute("x1", xs(p.minute)); cross.setAttribute("x2", xs(p.minute)); cross.setAttribute("visibility", "visible");
+        show(p);
+      };
+      hit.addEventListener("pointermove", move);
+      hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); show(nowPt); });
+      document.getElementById("dayNote").textContent =
+        `Shapes are each scaled to their own 0–100%: hover for the real numbers. Room brightness is the average of the last ${d.lux_days || 0} days of your sensor` +
+        (d.has_daylight_model ? "" : " (no daylight model yet: Flint uses the sun's height alone; use Apply learned on the lux card)") +
+        `. The gate follows the night window ${d.night.from}–${d.night.to}, capping lights at ${Math.round(d.night.cap)}%.`;
     }
 
     // ---------------------------------------------------------------- the grid

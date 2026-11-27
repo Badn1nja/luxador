@@ -110,3 +110,18 @@ def test_structure_api_and_settings_resume_after_readd(tmp_path, monkeypatch):
         assert any("shoelight now belongs to sofa" in entry["reason"] for entry in logs)
     with TestClient(lux_main.app) as c:  # restart: the edited YAML file is ignored, the database wins
         assert c.get("/api/house/structure").json()["rooms"]["lounge"]["friendly_name"] != "Edited file"
+
+
+def test_day_chart_endpoint(tmp_path, monkeypatch):
+    from lantern import main as lux_main
+
+    monkeypatch.setenv("LANTERN_DB_PATH", str(tmp_path / "l.db"))
+    cfg = tmp_path / "config"
+    (cfg / "rooms").mkdir(parents=True)
+    for f in ("settings.yaml", "schemas.yaml", "rooms/lounge.yaml"):
+        (cfg / f).write_text((CFG / f).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg)
+    with TestClient(lux_main.app) as c:
+        d = c.get("/api/rooms/lounge/day").json()
+        assert len(d["points"]) == 96 and {"sun", "gate", "light", "room_lux_pct"} <= set(d["points"][0])
+        assert max(p["gate"] for p in d["points"]) > 50 and min(p["gate"] for p in d["points"]) == 0  # night closes, day opens

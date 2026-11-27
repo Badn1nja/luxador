@@ -1126,6 +1126,66 @@ async def room_grid(room_name: str) -> dict[str, Any]:
                            for z in zones}}
 
 
+@app.get("/api/rooms/{room_name}/day")
+async def room_day(room_name: str) -> dict[str, Any]:
+    """One day on one chart: the sun, the room's typical lux, the sleep gate, and what Flint sets (someone in the room)."""
+    _room_or_404(room_name)
+    from .lux import predict_daylight
+    from .standard import curve_level, darkness_from_lux, darkness_from_sun, in_window
+
+    house = runtime.house_model()
+    if not house:
+        raise HTTPException(400, "house model invalid; fix it first")
+    curve = house.curve
+    rm = house.rooms.get(room_name)
+    daylight = rm.daylight.model_dump() if rm and rm.daylight else None
+    step = 15
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # typical measured room lux by time of day (last 14 days of Echo slots, lamps included)
+    buckets: dict[int, list[float]] = {}
+    slots = runtime.echo.load_slots(room_name)[-14 * 288:]
+    for sl in slots:
+        v = sl.get("lux_in")
+        if v is not None and sl.get("minute_of_day") is not None:
+            buckets.setdefault(int(sl["minute_of_day"]) // step * step, []).append(float(v))
+    pts, elevs = [], []
+    for k in range(0, 1440, step):
+        t = today + timedelta(minutes=k)
+        elev = runtime.sun_now(t)
+        elevs.append(elev)
+        pts.append({"minute": k, "t": t.strftime("%H:%M"), "sun_elev": elev})
+    peak = max([e for e in elevs if e is not None] or [0.0])
+    for p in pts:
+        e = p["sun_elev"]
+        p["sun"] = round(max(0.0, e) / peak * 100, 1) if e is not None and peak > 0 else None
+        day_lux = predict_daylight(daylight, e) if daylight else None
+        if curve.darkness_source == "ambient" and day_lux is not None:
+            d = darkness_from_lux(day_lux, curve)
+        else:
+            d = darkness_from_sun(e)
+        night = in_window(p["minute"], curve.night_from, curve.night_to)
+        lvl = curve_level(d, curve) if d is not None else None
+        if lvl is not None and night:
+            lvl = min(lvl, curve.night_max_pct)
+        p["light"] = round(lvl, 1) if lvl is not None else None
+        p["gate"] = 100.0 if night else 0.0
+        vals = buckets.get(p["minute"])
+        p["room_lux"] = round(sum(vals) / len(vals), 1) if vals else None
+        p["daylight_lux"] = round(day_lux, 1) if day_lux is not None else None
+    # soften the gate's edges a little so it reads as a ramp, not a cliff
+    raw = [p["gate"] for p in pts]
+    for i, p in enumerate(pts):
+        win = [raw[(i + j) % len(raw)] for j in (-2, -1, 0, 1, 2)]
+        p["gate"] = round(sum(win) / len(win), 1)
+    lux_vals = [p["room_lux"] for p in pts if p["room_lux"] is not None]
+    top = max(lux_vals) if lux_vals else 0.0
+    for p in pts:
+        p["room_lux_pct"] = round(p["room_lux"] / top * 100, 1) if p["room_lux"] is not None and top > 0 else None
+    return {"points": pts, "night": {"from": curve.night_from, "to": curve.night_to, "cap": curve.night_max_pct},
+            "peak_sun_elev": round(peak, 1), "lux_peak": round(top, 1), "has_daylight_model": bool(daylight),
+            "lux_days": len(slots) // 288, "now_minute": datetime.now().hour * 60 + datetime.now().minute}
+
+
 @app.get("/api/house/seasonal")
 async def seasonal_get() -> dict[str, Any]:
     assert runtime is not None
