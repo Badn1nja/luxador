@@ -42,6 +42,7 @@ from .house import area_entities, classify, house_overview
 from .echo import EchoStore
 from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSpec
 from .opnsense import OpnsensePoller
+from . import sensors as sensor_math
 from .structure import Structure, StructureError, propose_room
 from .presence import PresenceSnapshot, PresenceTracker
 from .resolver import evaluate_overlay_condition, resolve_room
@@ -129,6 +130,7 @@ class EngineRuntime:
         self.echo = EchoStore(self.settings["db_path"])
         # The house structure lives in Echo. Old rooms/*.yaml + schemas.yaml are read once, then ignored.
         self.structure = Structure(self.echo, log=self._log_structure)
+        self.sensor_live: dict[str, dict[str, Any]] = {}  # entity -> last cleaned reading (smoothing state)
         migrated = self.structure.migrate(CONFIG_DIR, DEFAULT_CONFIG_DIR if DEFAULT_CONFIG_DIR.exists() else BASE_DIR / "config")
         for item in migrated:
             logger.info("Migrated into the database: %s", item)
@@ -587,9 +589,22 @@ class EngineRuntime:
         )
         return {"before": from_bri, "after": to_bri}
 
+    def sensor_profiles(self) -> dict[str, dict[str, Any]]:
+        return self.echo.get_structure("sensor")
+
+    def update_sensors(self, now: datetime) -> None:
+        """Run every profiled sensor's latest reading through its profile (smoothing advances with real time)."""
+        for entity, prof in self.sensor_profiles().items():
+            st = self.bridge.states.get(entity) or {}
+            last = self.sensor_live.get(entity) or {}
+            dt = (now - last["at"]).total_seconds() if last.get("at") else 0.0
+            res = sensor_math.clean(st.get("state"), prof, last.get("lux"), dt)
+            self.sensor_live[entity] = {**res, "at": now}
+
     async def tick_once(self) -> None:
         now = datetime.now()
         self._accumulate_net(now)
+        self.update_sensors(now)
         for rname in list(self.rooms):
             self.update_presence(rname, now)
             self.step_darkness(rname, now)
@@ -1401,6 +1416,69 @@ async def house_entities() -> dict[str, Any]:
             out[kind].append({"entity_id": eid, "name": (st.get("attributes") or {}).get("friendly_name") or eid,
                               "room": used.get(eid)})
     return {"connected": runtime.bridge.connected, **out}
+
+
+class SensorProfileBody(BaseModel):
+    preset: str = "indoor_room"
+    floor_lux: float | None = None
+    scale: float | None = None
+    smooth_seconds: float | None = None
+    min_valid: float | None = None
+    max_valid: float | None = None
+    dark_lux: float | None = None
+    bright_lux: float | None = None
+
+
+@app.get("/api/house/sensors")
+async def house_sensors() -> dict[str, Any]:
+    """Every light, presence, lux and media entity: where it is attached, and for lux sensors the profile and live cleaned value."""
+    assert runtime is not None
+    where = sensor_math.attachments(runtime.structure.rooms_raw(), runtime.structure.home()["entities"])
+    profiles = runtime.sensor_profiles()
+    items = []
+    for eid, st in sorted(runtime.bridge.states.items()):
+        kind = classify(eid, st)
+        if not kind:
+            continue
+        row: dict[str, Any] = {"entity_id": eid, "kind": kind, "state": st.get("state"),
+                               "name": (st.get("attributes") or {}).get("friendly_name") or eid,
+                               "attached": where.get(eid, [])}
+        if kind == "lux":
+            row["unit"] = (st.get("attributes") or {}).get("unit_of_measurement")
+            row["profile"] = profiles.get(eid)
+            live = runtime.sensor_live.get(eid)
+            if live:
+                row["live"] = {k: v for k, v in live.items() if k != "at"}
+            else:
+                row["live"] = {k: v for k, v in sensor_math.clean(
+                    st.get("state"), profiles.get(eid) or sensor_math.make_profile("raw")).items()}
+        items.append(row)
+    return {"connected": runtime.bridge.connected, "items": items,
+            "presets": {k: v for k, v in sensor_math.PRESETS.items()}, "limits": sensor_math.FIELDS}
+
+
+@app.put("/api/house/sensors/{entity_id}/profile")
+async def house_sensor_profile_set(entity_id: str, req: SensorProfileBody) -> dict[str, Any]:
+    assert runtime is not None
+    if classify(entity_id, runtime.bridge.states.get(entity_id)) != "lux":
+        raise HTTPException(400, "only lux sensors have a profile for now")
+    try:
+        prof = sensor_math.make_profile(req.preset, **req.model_dump(exclude={"preset"}))
+    except sensor_math.ProfileError as exc:
+        raise HTTPException(400, str(exc))
+    runtime.echo.put_structure("sensor", entity_id, prof)
+    runtime.sensor_live.pop(entity_id, None)
+    runtime._log_structure(f"sensor {entity_id}", f"profile set to {req.preset}")
+    return {"ok": True, "profile": prof}
+
+
+@app.delete("/api/house/sensors/{entity_id}/profile")
+async def house_sensor_profile_clear(entity_id: str) -> dict[str, Any]:
+    assert runtime is not None
+    runtime.echo.delete_structure("sensor", entity_id)
+    runtime.sensor_live.pop(entity_id, None)
+    runtime._log_structure(f"sensor {entity_id}", "profile removed")
+    return {"ok": True}
 
 
 @app.get("/api/house/areas/{area_id}/propose")

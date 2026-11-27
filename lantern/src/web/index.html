@@ -263,6 +263,7 @@
       <select id="roomPicker" onchange="selectRoom(this.value)"></select>
     </label>
     <button id="nav-setup" onclick="showMainView('setup')">🧩 Setup</button>
+    <button id="nav-sensors" onclick="showMainView('sensors')">📡 Sensors</button>
     <button id="nav-flint" class="parked" onclick="showMainView('flint')">🔥 Flint</button>
     <button id="nav-echo" class="parked" onclick="showMainView('echo')">📊 Echo</button>
     <button id="nav-luxie" class="parked" onclick="showMainView('luxie')">🐱 Luxie</button>
@@ -311,6 +312,17 @@
         <div class="su-tabs" id="suTabs"></div>
         <div id="suMsg" class="muted" style="min-height:1.3em;"></div>
         <div id="suBody"></div>
+      </div>
+    </section>
+
+    <!-- SENSORS: every sensor, device and light, where it is attached, and clean-up profiles for lux sensors -->
+    <section id="view-sensors" class="view">
+      <div class="card">
+        <div class="row"><h2>Sensors &amp; devices</h2><span class="muted" id="snSummary"></span></div>
+        <div class="muted" style="margin:4px 0 10px;">Everything Home Assistant has that Lantern can use, and where it is attached: the home (not tied to a room), a room, or a zone. Lux sensors get a <strong>profile</strong>: a preset plus a little maths that turns the raw reading into a clean, relative brightness (0&ndash;100%). Cleaning happens inside Lantern; nothing is written to Home Assistant.</div>
+        <div id="snMsg" class="muted" style="min-height:1.3em;"></div>
+        <div class="su-tabs" id="snTabs"></div>
+        <div id="snBody"></div>
       </div>
     </section>
 
@@ -554,6 +566,7 @@
       document.getElementById("nav-" + name).classList.add("active");
       if (name === "overview") loadOverview();
       if (name === "setup") loadSetup();
+      if (name === "sensors") loadSensors();
       if (name === "logs") loadLogs();
       if (name === "echo") loadDataLab();
       if (name === "flint") loadFlint();
@@ -2051,6 +2064,69 @@
       if (!name) return;
       SX.sel.clear();
       suDo(sReq(`./api/house/rooms/${ROOM}/lights/merge`, { groups, name }), `Merged into ${name}.`);
+    }
+
+
+    // ---------------------------------------------------------------- SENSORS: breakdown + lux profiles
+    const SN = { kind: "lux", data: null, open: null };
+    const SN_KINDS = [["lux", "Lux sensors"], ["presence", "Presence"], ["media", "Media"], ["lights", "Lights"]];
+    async function loadSensors() {
+      SN.data = await fetch("./api/house/sensors").then(r => r.json());
+      renderSensors();
+    }
+    function snFmt(v, d = 0) { return v == null ? "—" : (+v).toFixed(d); }
+    function renderSensors() {
+      const d = SN.data;
+      if (!d) return;
+      const count = (k) => d.items.filter(i => (i.kind === "light" ? "lights" : i.kind) === k).length;
+      document.getElementById("snSummary").textContent = d.connected ? `${d.items.length} entities` : "Home Assistant not connected";
+      document.getElementById("snTabs").innerHTML = SN_KINDS.map(([k, l]) => `<button class="${SN.kind === k ? "active" : ""}" onclick="SN.kind='${k}';renderSensors()">${l} (${count(k)})</button>`).join("");
+      const rows = d.items.filter(i => (i.kind === "light" ? "lights" : i.kind) === SN.kind);
+      if (!rows.length) { document.getElementById("snBody").innerHTML = `<div class="muted">None found.</div>`; return; }
+      document.getElementById("snBody").innerHTML = rows.map(snRow).join("");
+    }
+    function snWhere(i) {
+      const chips = i.attached.map(w => `<span class="std-chip">${esc(w)}</span>`).join(" ") || `<span class="muted">not attached</span>`;
+      const home = i.attached.includes("home");
+      return `${chips} <button class="btn" onclick="snHome('${esc(i.entity_id)}', ${home ? "false" : "true"})">${home ? "Detach from home" : "Attach to home"}</button>`;
+    }
+    function snRow(i) {
+      const head = `<div class="row"><div><strong>${esc(i.name)}</strong> <code class="muted">${esc(i.entity_id)}</code></div><span class="muted">${esc(String(i.state))}${i.unit ? " " + esc(i.unit) : ""}</span></div>
+        <div style="margin:4px 0;">${snWhere(i)}</div>`;
+      if (i.kind !== "lux") return `<div class="su-grp">${head}</div>`;
+      const pr = i.profile, live = i.live || {};
+      const cur = pr ? pr.preset : "";
+      const liveTxt = live.valid === false ? `<span style="color:var(--red)">${esc(live.why || "invalid")}</span>`
+        : `raw ${snFmt(live.raw, 1)} lx → <strong>${snFmt(live.lux, 1)} lx</strong> → <strong>${snFmt(live.relative)}% relative brightness</strong>`;
+      const f = (k, label) => `<label><span class="t">${label}</span><input type="number" step="any" style="width:100px" value="${pr ? pr[k] : ""}" onchange="snSave('${esc(i.entity_id)}', {${k}: +this.value})"/></label>`;
+      return `<div class="su-grp">${head}
+        <div class="std-ctl"><label><span class="t">Profile</span><select onchange="snPreset('${esc(i.entity_id)}', this.value)">
+          <option value="" ${cur ? "" : "selected"}>— no profile (raw) —</option>
+          ${Object.entries(SN.data.presets).map(([k, v]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></label></div>
+        <div class="muted" style="margin:4px 0;">${liveTxt}</div>
+        ${pr ? `<details><summary class="muted">Tune the maths</summary><div class="std-ctl" style="margin-top:6px;">
+          ${f("floor_lux", "Sensor floor (lx)")}${f("scale", "Scale ×")}${f("smooth_seconds", "Smooth (s)")}
+          ${f("dark_lux", "0% at (lx)")}${f("bright_lux", "100% at (lx)")}${f("min_valid", "Valid from (lx)")}${f("max_valid", "Valid to (lx)")}</div></details>` : ""}
+      </div>`;
+    }
+    async function snDo(promise, msg) {
+      const out = await promise;
+      const m = document.getElementById("snMsg");
+      if (out.error) { m.innerHTML = `<span style="color:var(--red)">Not changed: ${esc(out.error)}</span>`; return; }
+      m.textContent = msg || "Saved.";
+      await loadSensors();
+    }
+    function snPreset(entity, preset) {
+      if (!preset) return snDo(sReq(`./api/house/sensors/${encodeURIComponent(entity)}/profile`, null, "DELETE"), "Profile removed.");
+      snDo(sReq(`./api/house/sensors/${encodeURIComponent(entity)}/profile`, { preset }, "PUT"), "Profile set.");
+    }
+    function snSave(entity, fields) {
+      const i = SN.data.items.find(x => x.entity_id === entity);
+      snDo(sReq(`./api/house/sensors/${encodeURIComponent(entity)}/profile`, { ...i.profile, ...fields }, "PUT"), "Saved.");
+    }
+    function snHome(entity, attach) {
+      snDo(attach ? sReq("./api/house/home/entities", { entity }) : sReq(`./api/house/home/entities/${encodeURIComponent(entity)}`, null, "DELETE"),
+           attach ? "Attached to the home." : "Detached from the home.");
     }
 
     initRooms().then(loadOverview);
