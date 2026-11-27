@@ -40,6 +40,22 @@ def room_entities(cfg: RoomConfig) -> set[str]:
     return ids
 
 
+def area_entities(area_id: str, devices: list[dict[str, Any]], entities: list[dict[str, Any]],
+                  states: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """Lights, presence sensors, lux sensors and media players HA has put in one area."""
+    device_area = {d["id"]: d.get("area_id") for d in devices}
+    out: dict[str, list[str]] = {"lights": [], "presence": [], "lux": [], "media": []}
+    for e in entities:
+        if e.get("disabled_by") or e.get("hidden_by"):
+            continue
+        if (e.get("area_id") or device_area.get(e.get("device_id"))) != area_id:
+            continue
+        kind = classify(e["entity_id"], states.get(e["entity_id"]))
+        if kind:
+            out[kind].append(e["entity_id"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def house_overview(
     areas: list[dict[str, Any]],
     devices: list[dict[str, Any]],

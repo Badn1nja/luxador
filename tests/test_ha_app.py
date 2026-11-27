@@ -26,7 +26,7 @@ def test_repository_layout_is_a_valid_ha_app_repo():
             assert (APP_DIR / src).exists(), f"Dockerfile COPY source missing: {src}"
 
 
-def test_app_mode_seeds_config_and_reads_options(tmp_path, monkeypatch):
+def test_app_mode_reads_options_and_writes_no_config_files(tmp_path, monkeypatch):
     opts = tmp_path / "data" / "options.json"
     opts.parent.mkdir()
     opts.write_text(json.dumps({
@@ -38,15 +38,7 @@ def test_app_mode_seeds_config_and_reads_options(tmp_path, monkeypatch):
     monkeypatch.setattr(lux_main, "IS_HA_APP", True)
     monkeypatch.setattr(lux_main, "HA_OPTIONS_PATH", opts)
     monkeypatch.setattr(lux_main, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(lux_main, "DEFAULT_CONFIG_DIR", APP_DIR / "src" / "config")
-
-    lux_main._seed_config_dir()
-    assert (cfg_dir / "rooms" / "lounge.yaml").exists()
-
-    # User edits survive a restart (seeding never overwrites)
-    (cfg_dir / "rooms" / "lounge.yaml").write_text("room: lounge\n", encoding="utf-8")
-    lux_main._seed_config_dir()
-    assert (cfg_dir / "rooms" / "lounge.yaml").read_text(encoding="utf-8") == "room: lounge\n"
+    assert not hasattr(lux_main, "_seed_config_dir")  # the database is the source of truth; no files are seeded
 
     monkeypatch.delenv("LANTERN_DB_PATH", raising=False)
     monkeypatch.delenv("LANTERN_DRY_RUN", raising=False)

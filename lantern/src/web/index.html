@@ -279,7 +279,7 @@
 
       <div class="card" style="margin-top:14px;">
         <div class="row"><h2>🗺️ House › Rooms (from Home Assistant areas)</h2><span class="pill info">Phase 0 · read-only</span></div>
-        <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Lantern is set up for. Add a room by dropping a <code>rooms/&lt;name&gt;.yaml</code> into the app's config folder; this shows what to put in it.</div>
+        <div class="muted" style="margin-bottom:8px;">What HA says is in each area (lights, presence, lux, media) against the rooms Lantern is set up for. Use <strong>Add as room</strong> on an area that isn't set up yet.</div>
         <div id="houseAreas" class="muted">Loading…</div>
       </div>
 
@@ -401,7 +401,7 @@
         <div class="row"><h2>Room › Zones › Lights</h2>
           <span><button class="btn" onclick="stdExport()">Export model</button>
           <label class="btn" style="display:inline-flex;cursor:pointer;">Import<input type="file" accept="application/json" style="display:none" onchange="stdImport(this.files[0])" /></label></span></div>
-        <div class="muted" style="margin-bottom:8px;">Every light is owned by one zone. <strong>join</strong> zones follow the room's presence; <strong>own</strong> zones follow their own and sit at their idle level when you're elsewhere in the room. Settings follow <a href="https://github.com/Badn1nja/luxador/blob/main/docs/STANDARD.md" target="_blank" rel="noopener" style="color:var(--teal)">the Standard</a>; 🔒 protects a value from edits, resets and auto-tuning.</div>
+        <div class="muted" style="margin-bottom:8px;">Tick lights to merge them into one group. Every light is owned by one zone. <strong>join</strong> zones follow the room's presence; <strong>own</strong> zones follow their own and sit at their idle level when you're elsewhere in the room. Settings follow <a href="https://github.com/Badn1nja/luxador/blob/main/docs/STANDARD.md" target="_blank" rel="noopener" style="color:var(--teal)">the Standard</a>; 🔒 protects a value from edits, resets and auto-tuning.</div>
         <div id="stdErrors"></div>
         <div id="stdZones" class="std-zones"></div>
       </div>
@@ -928,7 +928,8 @@
         <div style="overflow-x:auto;"><table><thead><tr><th>HA area</th><th>Lantern room</th><th>Lights</th><th>Presence</th><th>Lux</th><th>Media</th><th>Not in any room yet</th></tr></thead><tbody>${
         h.areas.map(a => `<tr>
           <td><strong>${esc(a.name)}</strong></td>
-          <td><span class="pill ${cls[a.status]}">${a.room ? esc(a.room) : a.status}</span></td>
+          <td><span class="pill ${cls[a.status]}">${a.room ? esc(a.room) : a.status}</span>
+            ${a.status === "not set up" ? ` <button class="btn" onclick="startAddRoom('${esc(a.area_id)}'); window.scrollTo(0,0)">Add as room</button>` : ""}</td>
           <td>${a.counts.lights}</td><td>${a.counts.presence}</td><td>${a.counts.lux}</td><td>${a.counts.media}</td>
           <td style="font-size:.75rem;">${Object.entries(a.not_in_any_room).map(([k, v]) => `<div><span class="k">${k}:</span> ${v.map(e => `<code>${esc(e)}</code>`).join(" ")}</div>`).join("") || "—"}</td>
         </tr>`).join("")}</tbody></table></div>
@@ -1158,7 +1159,9 @@
     function flintSays(msg) { document.getElementById("flintMsg").innerHTML = `🔥 <strong>Flint</strong> · ${msg}`; }
 
     async function loadHouse() {
-      const m = await fetch("./api/house/model").then(r => r.json());
+      const [m, st] = await Promise.all([fetch("./api/house/model").then(r => r.json()), fetch("./api/house/structure").then(r => r.json())]);
+      SX.struct = st;
+      await loadEntities();
       STD.m = m; STD.locks = new Set(m.locks || []);
       renderStdErrors(m.errors || []);
       if (!m.model) { flintSays("The house model has errors (in red below). Until they're fixed, rooms use their legacy rules."); return; }
@@ -1307,57 +1310,8 @@
     }
 
     // ---------------------------------------------------------------- room > zones > lights
-    function renderZones() {
-      const room = STD.m.model.rooms[ROOM];
-      const host = document.getElementById("stdZones");
-      if (!room) { host.innerHTML = `<div class="muted">No model for this room.</div>`; return; }
-      const lights = STD.m.rooms[ROOM].lights;
-      const owner = {};
-      Object.entries(room.zones).forEach(([z, zs]) => zs.lights.forEach(l => owner[l] = z));
-      const zones = ["room", ...Object.keys(room.zones)];
-      host.innerHTML = zones.map(z => {
-        const zs = room.zones[z];
-        const zp = `rooms.${ROOM}.zones.${z}`;
-        const mine = lights.filter(l => (owner[l] || "room") === z);
-        const head = z === "room"
-          ? `<div class="muted" style="margin-bottom:6px;">Lights not owned by a zone. Always follow room presence.</div>`
-          : `<div class="std-ctl" style="margin:0 0 6px;">${selectCtl(zp + ".mode", "Mode", zs.mode, ["join", "own"])}
-              ${zs.mode === "own" ? rangeCtl(zp + ".idle_pct", "Idle level", zs.idle_pct, 0, 100, 1, (v) => `${Math.round(v)}%`) : ""}</div>`;
-        return `<div class="std-zone"><h3>${z === "room" ? "Room (general)" : `Zone · ${esc(z)}`} <span class="std-chip">${mine.length} light${mine.length === 1 ? "" : "s"}</span></h3>
-          ${head}${mine.map(l => lightCard(l, room.lights[l] || {}, z, zones)).join("") || `<div class="muted">No lights here.</div>`}</div>`;
-      }).join("");
-    }
 
-    function lightCard(name, ls, zone, zones) {
-      const p = `rooms.${ROOM}.lights.${name}`;
-      const chips = [ls.curve !== "natural" ? ls.curve : null, ls.scale !== 1 ? `×${ls.scale}` : null, ls.offset_pct ? `${ls.offset_pct > 0 ? "+" : ""}${ls.offset_pct}%` : null,
-        ls.soft_start !== "never" ? `soft ${ls.soft_start === "always" ? "always" : "1st"}·${ls.soft_start_speed}` : null, ls.enabled ? null : "hands off"].filter(Boolean);
-      return `<details class="std-light" data-light="${esc(name)}">
-        <summary><span class="nm"><strong>${esc(name)}</strong></span><span>${chips.map(c => `<span class="std-chip">${esc(c)}</span>`).join(" ")} <span class="std-chip lvl" data-level="${esc(name)}">—</span></span></summary>
-        <div class="std-ctl">
-          <label><span class="t">Owned by</span><select onchange="stdMove('${esc(name)}', '${zone}', this.value)">${zones.map(z => `<option ${z === zone ? "selected" : ""}>${z}</option>`).join("")}</select></label>
-          <label><span class="t">Flint drives it</span><input type="checkbox" ${ls.enabled ? "checked" : ""} ${isLocked(p + ".enabled") ? "disabled" : ""} onchange="stdSet('${p}.enabled', this.checked, true)" />${lockBtnStd(p + ".enabled")}</label>
-          ${selectCtl(p + ".curve", "Follows", ls.curve, ["natural", "brightness_only", "fixed", "switch"])}
-          ${ls.curve === "fixed" ? rangeCtl(p + ".fixed_pct", "Fixed at", ls.fixed_pct, 1, 100, 1, (v) => `${Math.round(v)}%`) : ""}
-          ${rangeCtl(p + ".scale", "Scale", ls.scale, 0.25, 2, 0.05, (v) => `×${(+v).toFixed(2)}`)}
-          ${rangeCtl(p + ".offset_pct", "Offset", ls.offset_pct, -50, 50, 1, (v) => `${v > 0 ? "+" : ""}${Math.round(v)}%`)}
-          ${rangeCtl(p + ".min_pct", "Never below", ls.min_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
-          ${rangeCtl(p + ".max_pct", "Never above", ls.max_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
-          ${rangeCtl(p + ".kelvin_offset", "Colour shift", ls.kelvin_offset, -1000, 1000, 50, (v) => `${v > 0 ? "+" : ""}${Math.round(v)}K`)}
-          ${ls.lux_gain != null ? rangeCtl(p + ".lux_gain", "Adds at sensor", ls.lux_gain, 0, Math.max(500, ls.lux_gain * 2), 1, (v) => `${Math.round(v)} lx`) : ""}
-          ${selectCtl(p + ".soft_start", "Soft start", ls.soft_start, ["never", "first_of_day", "always"])}
-          ${selectCtl(p + ".soft_start_speed", "Fade-in", ls.soft_start_speed, ["fast", "normal", "slow", "sunrise"])}
-        </div></details>`;
-    }
 
-    async function stdMove(light, from, to) {
-      const room = STD.m.model.rooms[ROOM];
-      const patch = { rooms: { [ROOM]: { zones: {} } } };
-      if (from !== "room") patch.rooms[ROOM].zones[from] = { lights: room.zones[from].lights.filter(l => l !== light) };
-      if (to !== "room") patch.rooms[ROOM].zones[to] = { lights: [...room.zones[to].lights.filter(l => l !== light), light] };
-      if (await stdPost({ patch })) { renderZones(); refreshStdLive(); flintSays(`<b>${esc(light)}</b> now belongs to zone <b>${esc(to)}</b>.`); }
-      else renderZones();
-    }
 
     function renderZoneLevels(st) {
       const roles = st?.evaluation?.roles || {};
@@ -1440,7 +1394,13 @@
         : "Not connected to Home Assistant, so there's nothing real to show yet.";
       document.getElementById("houseBadges").innerHTML = `
         <span class="pill ${data.opnsense.ready ? 'ok' : (data.opnsense.configured ? 'alert' : '')}">OPNsense: ${data.opnsense.ready ? 'live' : (data.opnsense.configured ? 'error' : 'not set up')}</span>`;
-      document.getElementById("overviewRooms").innerHTML = data.rooms.map(r => `
+      document.getElementById("overviewRooms").innerHTML = `
+        <div class="card dashed" style="opacity:1;">
+          <h2>+ Add a room</h2>
+          <div class="muted" style="margin-bottom:8px;">Start from a Home Assistant area (its lights, presence, lux and TV are filled in for you) or from scratch.</div>
+          <div id="addRoomAreas"></div>
+          <div id="addRoomForm"></div>
+        </div>` + data.rooms.map(r => `
         <div class="card">
           <div class="row">
             <h2>${esc(r.friendly_name)}</h2>
@@ -1452,9 +1412,11 @@
             <div><div class="kpi">${r.active_roles}/${r.total_roles}</div><div class="muted">lights would be on</div></div>
           </div>` : ""}
           ${(r.warnings || []).map(w => `<div class="muted" style="color:var(--gold);margin-bottom:6px;">⚠ ${esc(w)}</div>`).join("")}
-          <button class="btn primary" onclick="openRoom('${esc(r.room)}')">Open in Luxie</button>
+          <button class="btn primary" onclick="openRoom('${esc(r.room)}')">Open in Flint</button>
+          <button class="btn danger" onclick="removeRoom('${esc(r.room)}', '${esc(r.friendly_name)}')">Remove</button>
         </div>`).join("");
       loadHouseAreas();
+      renderAddRoomPicker();
       const cont = await fetch(`./api/rooms/${ROOM}/contested`).then(r => r.json());
       document.querySelector("#contestedTable tbody").innerHTML = cont.lights.map(l => `
         <tr><td><code>${esc(l.entity_id)}</code></td>
@@ -1625,6 +1587,241 @@
       if (!res.ok) { flintSays(`Not applied: ${esc(typeof out.detail === "string" ? out.detail : (out.detail?.errors || []).join("; "))}`); return; }
       flintSays("Applied the learned lux calibration. Each value is now in the light's settings, where you can see, change or lock it.");
       STD.m = out; renderZones(); refreshStdLive(); loadLux();
+    }
+
+    // ===================================================================== HOUSE STRUCTURE (rooms, zones, light groups)
+    const SX = { ents: null, struct: null, sel: new Set(), idleTimer: null };
+
+    async function sReq(url, body, method = "POST") {
+      const res = await fetch(url, { method, headers: {"Content-Type": "application/json"}, body: body ? JSON.stringify(body) : undefined });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: typeof out.detail === "string" ? out.detail : JSON.stringify(out.detail) };
+      return out;
+    }
+    async function loadEntities() {
+      if (!SX.ents) SX.ents = await fetch("./api/house/entities").then(r => r.json());
+      return SX.ents;
+    }
+    const entName = (e) => {
+      for (const k of ["lights", "presence", "lux", "media"]) {
+        const hit = (SX.ents?.[k] || []).find(x => x.entity_id === e);
+        if (hit) return hit.name;
+      }
+      return e;
+    };
+    function entityOptions(kind, exclude = [], none = false) {
+      const list = (SX.ents?.[kind] || []).filter(x => !exclude.includes(x.entity_id));
+      return (none ? `<option value="">— none —</option>` : `<option value="">add…</option>`) +
+        list.map(x => `<option value="${esc(x.entity_id)}">${esc(x.name)} (${esc(x.entity_id)})</option>`).join("");
+    }
+
+    // ---------------------------------------------------------------- Flint: room › zones › lights
+    function sensorChips(list, removeFn) {
+      return list.map(e => `<span class="std-chip" title="${esc(e)}">${esc(entName(e))} <a href="#" onclick="${removeFn}('${esc(e)}');return false;" aria-label="remove">✕</a></span>`).join(" ")
+        || `<span class="muted">none</span>`;
+    }
+
+    function renderZones() {
+      const room = STD.m.model.rooms[ROOM];
+      const raw = SX.struct?.rooms?.[ROOM];
+      const host = document.getElementById("stdZones");
+      if (!room || !raw) { host.innerHTML = `<div class="muted">No model for this room.</div>`; return; }
+      const lights = Object.keys(raw.bulbs || {});
+      const zonesRaw = (raw.presence || {}).zones || {};
+      const owner = {};
+      Object.entries(zonesRaw).forEach(([z, zr]) => (zr.lights || []).forEach(l => owner[l] = z));
+      const zones = ["room", ...Object.keys(zonesRaw)];
+      const pres = (raw.presence || {}).sensors || [];
+      const roomCard = `<div class="std-zone" style="grid-column:1/-1;">
+          <div class="row"><h3>Room sensors</h3>
+            <span><button class="btn" onclick="addZone()">+ Add zone</button>
+            <button class="btn" ${SX.sel.size < 2 ? "disabled" : ""} onclick="mergeSelected()">Merge selected lights${SX.sel.size ? ` (${SX.sel.size})` : ""}</button></span></div>
+          <div class="std-ctl" style="margin-top:4px;">
+            <label><span class="t">Presence</span><span>${sensorChips(pres, "roomPresRemove")}</span>
+              <select onchange="roomPresAdd(this.value)">${entityOptions("presence", pres)}</select></label>
+            <label><span class="t">Lux (indoor)</span><select onchange="roomSet({lux_sensor: this.value})">${entityOptions("lux", [], true).replace(`value="${esc(raw.lux_sensor || "")}"`, `value="${esc(raw.lux_sensor || "")}" selected`)}</select></label>
+            <label><span class="t">TV / media</span><select onchange="roomSet({media_sensor: this.value})">${entityOptions("media", [], true).replace(`value="${esc(raw.media_sensor || "")}"`, `value="${esc(raw.media_sensor || "")}" selected`)}</select></label>
+            <label><span class="t">Clear after</span><input type="number" min="0" max="3600" step="30" style="width:90px" value="${(raw.presence || {}).clear_delay_seconds ?? 180}" onchange="roomSet({clear_delay_seconds: +this.value})" /> s</label>
+          </div></div>`;
+      host.innerHTML = roomCard + zones.map(z => {
+        const zr = zonesRaw[z] || {};
+        const mine = lights.filter(l => (owner[l] || "room") === z);
+        const head = z === "room"
+          ? `<div class="muted" style="margin-bottom:6px;">Lights not owned by a zone. They follow room presence.</div>`
+          : `<div class="std-ctl" style="margin:0 0 6px;">
+              <label><span class="t">Mode</span><select onchange="zoneSet('${esc(z)}', {mode: this.value})">${["join", "own"].map(m => `<option ${m === (zr.mode || "join") ? "selected" : ""}>${m}</option>`).join("")}</select></label>
+              ${(zr.mode || "join") === "own" ? `<label><span class="t">Idle level</span><input type="range" min="0" max="100" step="1" value="${zr.idle_pct ?? 0}"
+                 oninput="this.nextElementSibling.textContent=this.value+'%'; zoneIdle('${esc(z)}', +this.value)" /><span class="v">${zr.idle_pct ?? 0}%</span></label>` : ""}
+              <label><span class="t">Presence</span><span>${sensorChips(zr.presence || [], `((e)=>zonePresRemove('${esc(z)}', e))`)}</span>
+                <select onchange="zonePresAdd('${esc(z)}', this.value)">${entityOptions("presence", zr.presence || [])}</select></label>
+            </div>`;
+        const title = z === "room" ? "Room (general)" : `Zone · ${esc(z)}`;
+        const del = z === "room" ? "" : `<button class="btn danger" onclick="removeZone('${esc(z)}')">Remove zone</button>`;
+        return `<div class="std-zone"><div class="row"><h3>${title} <span class="std-chip">${mine.length} light${mine.length === 1 ? "" : "s"}</span></h3>${del}</div>
+          ${head}${mine.map(l => lightCard(l, room.lights[l] || {}, z, zones, raw.bulbs[l] || [])).join("") || `<div class="muted">No lights here.</div>`}</div>`;
+      }).join("");
+    }
+
+    function lightCard(name, ls, zone, zones, entities) {
+      const p = `rooms.${ROOM}.lights.${name}`;
+      const chips = [ls.curve !== "natural" ? ls.curve : null, ls.scale !== 1 ? `×${ls.scale}` : null, ls.offset_pct ? `${ls.offset_pct > 0 ? "+" : ""}${ls.offset_pct}%` : null,
+        ls.soft_start !== "never" ? `soft ${ls.soft_start === "always" ? "always" : "1st"}·${ls.soft_start_speed}` : null, ls.enabled ? null : "hands off",
+        entities.length > 1 ? `${entities.length} bulbs` : null].filter(Boolean);
+      return `<details class="std-light" data-light="${esc(name)}">
+        <summary><span class="nm"><input type="checkbox" title="select to merge" ${SX.sel.has(name) ? "checked" : ""} onclick="event.stopPropagation(); toggleSel('${esc(name)}', this.checked)" /> <strong>${esc(name)}</strong></span>
+          <span>${chips.map(c => `<span class="std-chip">${esc(c)}</span>`).join(" ")} <span class="std-chip lvl" data-level="${esc(name)}">—</span></span></summary>
+        <div class="muted" style="margin:4px 0;">${entities.map(e => `<code title="${esc(e)}">${esc(entName(e))}</code>`).join(" ")}
+          ${entities.length > 1 ? ` <button class="btn" onclick="splitGroup('${esc(name)}')">Split into single lights</button>` : ""}</div>
+        <div class="std-ctl">
+          <label><span class="t">Owned by</span><select onchange="stdMove('${esc(name)}', '${zone}', this.value)">${zones.map(z => `<option ${z === zone ? "selected" : ""}>${z}</option>`).join("")}</select></label>
+          <label><span class="t">Flint drives it</span><input type="checkbox" ${ls.enabled ? "checked" : ""} ${isLocked(p + ".enabled") ? "disabled" : ""} onchange="stdSet('${p}.enabled', this.checked, true)" />${lockBtnStd(p + ".enabled")}</label>
+          ${selectCtl(p + ".curve", "Follows", ls.curve, ["natural", "brightness_only", "fixed", "switch"])}
+          ${ls.curve === "fixed" ? rangeCtl(p + ".fixed_pct", "Fixed at", ls.fixed_pct, 1, 100, 1, (v) => `${Math.round(v)}%`) : ""}
+          ${rangeCtl(p + ".scale", "Scale", ls.scale, 0.25, 2, 0.05, (v) => `×${(+v).toFixed(2)}`)}
+          ${rangeCtl(p + ".offset_pct", "Offset", ls.offset_pct, -50, 50, 1, (v) => `${v > 0 ? "+" : ""}${Math.round(v)}%`)}
+          ${rangeCtl(p + ".min_pct", "Never below", ls.min_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
+          ${rangeCtl(p + ".max_pct", "Never above", ls.max_pct, 0, 100, 1, (v) => `${Math.round(v)}%`)}
+          ${rangeCtl(p + ".kelvin_offset", "Colour shift", ls.kelvin_offset, -1000, 1000, 50, (v) => `${v > 0 ? "+" : ""}${Math.round(v)}K`)}
+          ${ls.lux_gain != null ? rangeCtl(p + ".lux_gain", "Adds at sensor", ls.lux_gain, 0, Math.max(500, ls.lux_gain * 2), 1, (v) => `${Math.round(v)} lx`) : ""}
+          ${selectCtl(p + ".soft_start", "Soft start", ls.soft_start, ["never", "first_of_day", "always"])}
+          ${selectCtl(p + ".soft_start_speed", "Fade-in", ls.soft_start_speed, ["fast", "normal", "slow", "sunrise"])}
+        </div></details>`;
+    }
+
+    async function structureDone(out, msg) {
+      if (out.error) { flintSays(`Not changed: ${esc(out.error)}`); return; }
+      flintSays(msg);
+      await loadHouse();
+    }
+    async function stdMove(light, from, to) {
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/lights/move`, { light, zone: to }), `<b>${esc(light)}</b> now belongs to <b>${esc(to)}</b>.`);
+    }
+    async function zoneSet(zone, fields) {
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/zones/${zone}`, fields, "PATCH"), `Zone <b>${esc(zone)}</b> updated.`);
+    }
+    function zoneIdle(zone, v) {
+      clearTimeout(SX.idleTimer);
+      SX.idleTimer = setTimeout(() => zoneSet(zone, { idle_pct: v }), 300);
+    }
+    function zonePresAdd(zone, e) {
+      if (!e) return;
+      const cur = SX.struct.rooms[ROOM].presence.zones[zone].presence || [];
+      zoneSet(zone, { presence: [...cur, e] });
+    }
+    function zonePresRemove(zone, e) {
+      const cur = SX.struct.rooms[ROOM].presence.zones[zone].presence || [];
+      zoneSet(zone, { presence: cur.filter(x => x !== e) });
+    }
+    async function roomSet(fields) {
+      structureDone(await sReq(`./api/house/rooms/${ROOM}`, fields, "PATCH"), "Room sensors updated.");
+    }
+    function roomPresAdd(e) {
+      if (!e) return;
+      roomSet({ presence: [...(SX.struct.rooms[ROOM].presence.sensors || []), e] });
+    }
+    function roomPresRemove(e) {
+      roomSet({ presence: (SX.struct.rooms[ROOM].presence.sensors || []).filter(x => x !== e) });
+    }
+    async function addZone() {
+      const name = (prompt("Name the new zone (a–z, 0–9, _), e.g. reading_chair") || "").trim().toLowerCase();
+      if (!name) return;
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/zones`, { name }),
+        `Zone <b>${esc(name)}</b> added. Give it a presence sensor (or leave it as a group that follows the room) and move lights into it.`);
+    }
+    async function removeZone(zone) {
+      if (!confirm(`Remove zone ${zone}? Its lights go back to following the room.`)) return;
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/zones/${zone}`, null, "DELETE"), `Zone <b>${esc(zone)}</b> removed; its lights follow the room now.`);
+    }
+    function toggleSel(name, on) {
+      on ? SX.sel.add(name) : SX.sel.delete(name);
+      renderZones();
+    }
+    async function mergeSelected() {
+      const groups = [...SX.sel];
+      const name = (prompt(`Merge ${groups.join(", ")} into one light group called:`, groups[0]) || "").trim();
+      if (!name) return;
+      SX.sel.clear();
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/lights/merge`, { groups, name }), `Merged into <b>${esc(name)}</b>: they now move together.`);
+    }
+    async function splitGroup(name) {
+      if (!confirm(`Split ${name} back into one light group per bulb?`)) return;
+      structureDone(await sReq(`./api/house/rooms/${ROOM}/lights/${name}/split`), `<b>${esc(name)}</b> split into single lights.`);
+    }
+
+    // ---------------------------------------------------------------- Home: add / remove rooms
+    async function removeRoom(room, label) {
+      if (!confirm(`Remove ${label}?\n\nFlint stops controlling its lights (they stay exactly as they are). Its history and settings are kept, so adding it back later picks up where it left off.`)) return;
+      const out = await sReq(`./api/house/rooms/${room}`, null, "DELETE");
+      if (out.error) { alert(out.error); return; }
+      await initRooms(); loadOverview();
+    }
+
+    async function startAddRoom(areaId = "") {
+      const host = document.getElementById("addRoomForm");
+      await loadEntities();
+      let p;
+      if (areaId) {
+        const res = await fetch(`./api/house/areas/${encodeURIComponent(areaId)}/propose`);
+        p = await res.json();
+        if (!res.ok) { host.innerHTML = `<div class="std-err">${esc(p.detail || "Couldn't read that area")}</div>`; return; }
+      } else {
+        const free = (SX.ents.lights || []).filter(x => !x.room);
+        p = { room: "", friendly_name: "", lights: {}, presence: [], zones: {}, lux_sensor: null, media_sensor: null,
+              candidates: { lights: free.map(x => x.entity_id), presence: (SX.ents.presence || []).map(x => x.entity_id),
+                            lux: (SX.ents.lux || []).map(x => x.entity_id), media: (SX.ents.media || []).map(x => x.entity_id) } };
+      }
+      const groupOf = {};
+      Object.entries(p.lights).forEach(([g, ents]) => ents.forEach(e => groupOf[e] = g));
+      const box = (name, val, label, checked) => `<label class="inline"><input type="checkbox" name="${name}" value="${esc(val)}" ${checked ? "checked" : ""}/> ${label}</label>`;
+      host.innerHTML = `<div class="breakdown" style="margin-top:8px;">
+        <div class="std-ctl">
+          <label><span class="t">Room id</span><input id="arId" value="${esc(p.room)}" placeholder="e.g. bedroom" /></label>
+          <label><span class="t">Name</span><input id="arName" value="${esc(p.friendly_name)}" placeholder="e.g. Bedroom" /></label>
+        </div>
+        <div style="margin-top:8px;"><strong>Lights</strong> <span class="muted">(each becomes its own light group; merge them later on the Flint tab)</span>
+          <div>${(p.candidates.lights || []).map(e => box("arLight", e, `${esc(entName(e))} <code>${esc(e)}</code>`, !!groupOf[e])).join("<br>") || `<span class="muted">none found</span>`}</div></div>
+        <div style="margin-top:8px;"><strong>Room presence</strong>
+          <div>${(p.candidates.presence || []).map(e => box("arPres", e, `${esc(entName(e))} <code>${esc(e)}</code>`, p.presence.includes(e))).join("<br>") || `<span class="muted">none found</span>`}</div></div>
+        ${Object.keys(p.zones).length ? `<div style="margin-top:8px;"><strong>Zones</strong> <span class="muted">(one per radar zone sensor; rename later)</span>
+          <div>${Object.entries(p.zones).map(([z, zr]) => box("arZone", z, `${esc(z)}: <code>${esc(zr.presence[0])}</code>`, true)).join("<br>")}</div></div>` : ""}
+        <div class="std-ctl" style="margin-top:8px;">
+          <label><span class="t">Lux (indoor)</span><select id="arLux"><option value="">— none —</option>${(p.candidates.lux || []).map(e => `<option value="${esc(e)}" ${e === p.lux_sensor ? "selected" : ""}>${esc(entName(e))}</option>`).join("")}</select></label>
+          <label><span class="t">TV / media</span><select id="arMedia"><option value="">— none —</option>${(p.candidates.media || []).map(e => `<option value="${esc(e)}" ${e === p.media_sensor ? "selected" : ""}>${esc(entName(e))}</option>`).join("")}</select></label>
+        </div>
+        <div style="margin-top:10px;"><button class="btn primary" onclick="createRoom()">Create room</button> <button class="btn" onclick="document.getElementById('addRoomForm').innerHTML=''">Cancel</button></div>
+        <div id="arMsg" class="muted" style="margin-top:6px;"></div></div>`;
+      SX.proposal = p;
+    }
+
+    async function createRoom() {
+      const p = SX.proposal;
+      const picked = (n) => [...document.querySelectorAll(`#addRoomForm input[name=${n}]:checked`)].map(x => x.value);
+      const lights = {};
+      picked("arLight").forEach(e => {
+        let g = e.split(".")[1].toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "light";
+        while (lights[g]) g += "_2";
+        lights[g] = [e];
+      });
+      const zones = {};
+      picked("arZone").forEach(z => zones[z] = p.zones[z]);
+      const body = { room: document.getElementById("arId").value.trim(), friendly_name: document.getElementById("arName").value.trim(),
+                     lights, presence: picked("arPres"), lux_sensor: document.getElementById("arLux").value || null,
+                     media_sensor: document.getElementById("arMedia").value || null, zones };
+      const out = await sReq("./api/house/rooms", body);
+      if (out.error) { document.getElementById("arMsg").textContent = out.error; return; }
+      document.getElementById("addRoomForm").innerHTML = "";
+      SX.ents = null;
+      await initRooms(); openRoom(body.room);
+    }
+
+    async function renderAddRoomPicker() {
+      const host = document.getElementById("addRoomAreas");
+      const h = await fetch("./api/house/areas").then(r => r.json());
+      if (!h.available) { host.innerHTML = `<span class="muted">${esc(h.reason)}.</span> <button class="btn" onclick="startAddRoom()">Start a blank room</button>`; return; }
+      const open = h.areas.filter(a => a.status !== "set up" && a.counts.lights);
+      host.innerHTML = `<select id="arArea"><option value="">Pick an HA area…</option>${open.map(a => `<option value="${esc(a.area_id)}">${esc(a.name)} (${a.counts.lights} lights)</option>`).join("")}</select>
+        <button class="btn primary" onclick="startAddRoom(document.getElementById('arArea').value)">Use this area</button>
+        <button class="btn" onclick="startAddRoom()">Blank room</button>`;
     }
 
     initRooms().then(loadOverview);

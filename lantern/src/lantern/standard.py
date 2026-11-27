@@ -142,8 +142,23 @@ def _flatten_errors(exc: ValidationError) -> list[str]:
 
 def build_house(settings: dict[str, Any], rooms: dict[str, RoomConfig],
                 overrides: dict[str, Any] | None = None) -> tuple[HouseModel | None, list[str]]:
-    """defaults < config files < UI overrides, validated as one piece. Returns (model, errors)."""
-    merged = deep_merge(from_config(settings, rooms), overrides or {})
+    """defaults < the house structure < UI settings, validated as one piece. Returns (model, errors).
+
+    Zone ownership (which zone owns which light, join/own, idle) is part of the structure, so any `zones` in the
+    overrides are ignored. Settings for a room or light group that doesn't exist (removed, renamed, merged) are
+    left out of the model but kept in storage, so re-adding it picks them up again.
+    """
+    ov = copy.deepcopy(overrides or {})
+    for rname in list((ov.get("rooms") or {})):
+        if rname not in rooms:
+            ov["rooms"].pop(rname)
+            continue
+        r = ov["rooms"][rname]
+        r.pop("zones", None)
+        for light in list((r.get("lights") or {})):
+            if light not in rooms[rname].bulbs:
+                r["lights"].pop(light)
+    merged = deep_merge(from_config(settings, rooms), ov)
     try:
         model = HouseModel.model_validate(merged)
     except ValidationError as exc:

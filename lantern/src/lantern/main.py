@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,11 +38,11 @@ from .seasonal import SeasonalConfig, SeasonalModel, clean_overrides
 from .datalab import add_since_active as d_add_since_active
 from .datalab import series as d_series
 from .ha_bridge import HABridge
-from .house import house_overview
+from .house import area_entities, classify, house_overview
 from .echo import EchoStore
 from .models import PunchState, RoleEvaluation, RoomConfig, RoomInputs, SignalSpec
 from .opnsense import OpnsensePoller
-from .parser import load_config_bundle, load_room_yaml, load_schemas_yaml
+from .structure import Structure, StructureError, propose_room
 from .presence import PresenceSnapshot, PresenceTracker
 from .resolver import evaluate_overlay_condition, resolve_room
 
@@ -65,20 +64,6 @@ HA_OPTIONS_PATH = Path(os.environ.get("LANTERN_HA_OPTIONS", "/data/options.json"
 IS_HA_APP = HA_OPTIONS_PATH.exists()
 CONFIG_DIR = Path(os.environ.get("LANTERN_CONFIG_DIR", "/config" if IS_HA_APP else str(BASE_DIR / "config")))
 DEFAULT_CONFIG_DIR = BASE_DIR / "default_config"
-
-
-def _seed_config_dir() -> None:
-    """First start as an HA app: copy the example rooms/schemas/settings into the app's config folder."""
-    if not DEFAULT_CONFIG_DIR.exists():
-        return
-    for src in DEFAULT_CONFIG_DIR.rglob("*"):
-        dst = CONFIG_DIR / src.relative_to(DEFAULT_CONFIG_DIR)
-        if src.is_dir():
-            dst.mkdir(parents=True, exist_ok=True)
-        elif not dst.exists():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            logger.info("Seeded default config %s", dst)
 
 
 def _ha_options() -> dict[str, Any]:
@@ -140,11 +125,15 @@ class EngineRuntime:
     """Holds live loaded configs, active punches, Luxie DB, and HA bridge."""
 
     def __init__(self) -> None:
-        if IS_HA_APP:
-            _seed_config_dir()
         self.settings = _load_settings()
-        self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
         self.echo = EchoStore(self.settings["db_path"])
+        # The house structure lives in Echo. Old rooms/*.yaml + schemas.yaml are read once, then ignored.
+        self.structure = Structure(self.echo, log=self._log_structure)
+        migrated = self.structure.migrate(CONFIG_DIR, DEFAULT_CONFIG_DIR if DEFAULT_CONFIG_DIR.exists() else BASE_DIR / "config")
+        for item in migrated:
+            logger.info("Migrated into the database: %s", item)
+        self._fold_zone_overrides()
+        self.schemas, self.rooms, self.structure_errors = self.structure.bundle()
         self.punches: dict[str, dict[str, PunchState]] = {}
         self.sim_overrides: dict[str, RoomInputs] = {}
         self.last_commands: dict[str, list[dict[str, Any]]] = {}
@@ -207,8 +196,33 @@ class EngineRuntime:
                     self.apply_punch(rname, role, delta, actor=actor, now=now)
 
     def reload(self) -> None:
-        self.schemas, self.rooms = load_config_bundle(CONFIG_DIR)
+        self.schemas, self.rooms, self.structure_errors = self.structure.bundle()
         self.datalab.rooms = self.rooms
+        for rname, rcfg in self.rooms.items():  # a newly added room starts as "nothing known"
+            self.sim_overrides.setdefault(rname, RoomInputs(occupied=False, ambient_lux=0.0, zones={z: False for z in rcfg.presence.zones}))
+
+    def _log_structure(self, room: str, what: str) -> None:
+        self.echo.log_causal_event(room, "(structure)", 0, 0, "you", what)
+
+    def _fold_zone_overrides(self) -> None:
+        """Before v0.10, moving a light between zones was stored as a UI setting. Zone ownership now lives in the
+        structure: carry any such setting across once, then drop it from the settings."""
+        ov = self.house_overrides()
+        changed = False
+        for rname, r in list((ov.get("rooms") or {}).items()):
+            zones = r.pop("zones", None)
+            if not zones:
+                continue
+            changed = True
+            for zname, z in zones.items():
+                try:
+                    fields = {k: z[k] for k in ("lights", "mode", "idle_pct") if k in z}
+                    if fields:
+                        self.structure.update_zone(rname, zname, **fields)
+                except (KeyError, StructureError) as exc:
+                    logger.warning("Could not carry zone setting %s/%s across: %s", rname, zname, exc)
+        if changed:
+            self.echo.save_model("_house", "house_overrides", json.dumps(ov))
 
     def _track_activity(self, room_name: str, inputs: dict[str, Any], ev: dict[str, Any], now: datetime) -> None:
         lights_on = any(
@@ -667,10 +681,6 @@ class PunchRequest(BaseModel):
     actor: str = "manual_ui"
 
 
-class YamlSaveRequest(BaseModel):
-    content: str
-
-
 class DeviceDecisionRequest(BaseModel):
     host: str
     status: str  # accepted | ignored | clear
@@ -799,45 +809,6 @@ async def punch_role(room_name: str, req: PunchRequest) -> dict[str, Any]:
     if room_name not in runtime.rooms:
         raise HTTPException(404, f"Unknown room: {room_name}")
     return runtime.apply_punch(room_name, req.role, req.delta_pct, actor=req.actor)
-
-
-@app.get("/api/yaml/room/{room_name}")
-async def get_room_yaml(room_name: str) -> dict[str, str]:
-    path = CONFIG_DIR / "rooms" / f"{room_name}.yaml"
-    if not path.exists():
-        raise HTTPException(404, "Room YAML not found")
-    return {"content": path.read_text(encoding="utf-8")}
-
-
-@app.post("/api/yaml/room/{room_name}")
-async def save_room_yaml(room_name: str, req: YamlSaveRequest) -> dict[str, Any]:
-    assert runtime is not None
-    try:
-        parsed: RoomConfig = load_room_yaml(req.content)
-    except Exception as exc:
-        raise HTTPException(400, f"YAML validation error: {exc}") from exc
-    path = CONFIG_DIR / "rooms" / f"{room_name}.yaml"
-    path.write_text(req.content, encoding="utf-8")
-    runtime.reload()
-    return {"ok": True, "room": parsed.room, "rules_count": len(parsed.rules)}
-
-
-@app.get("/api/yaml/schemas")
-async def get_schemas_yaml() -> dict[str, str]:
-    path = CONFIG_DIR / "schemas.yaml"
-    return {"content": path.read_text(encoding="utf-8")}
-
-
-@app.post("/api/yaml/schemas")
-async def save_schemas_yaml(req: YamlSaveRequest) -> dict[str, Any]:
-    assert runtime is not None
-    try:
-        parsed = load_schemas_yaml(req.content)
-    except Exception as exc:
-        raise HTTPException(400, f"Schemas YAML validation error: {exc}") from exc
-    (CONFIG_DIR / "schemas.yaml").write_text(req.content, encoding="utf-8")
-    runtime.reload()
-    return {"ok": True, "schemas": list(parsed.keys())}
 
 
 @app.get("/api/luxie/{room_name}/logs")
@@ -1231,6 +1202,145 @@ async def datalab_rebuild(room_name: str) -> dict[str, Any]:
     if room_name not in runtime.rooms:
         raise HTTPException(404, f"Unknown room: {room_name}")
     return runtime.datalab.rebuild(room_name)
+
+
+
+# ============================================================================ the house structure (DB)
+class RoomCreate(BaseModel):
+    room: str
+    friendly_name: str = ""
+    lights: dict[str, list[str]] = {}
+    presence: list[str] = []
+    lux_sensor: str | None = None
+    media_sensor: str | None = None
+    zones: dict[str, dict[str, Any]] = {}
+
+
+class RoomUpdate(BaseModel):
+    friendly_name: str | None = None
+    lux_sensor: str | None = None
+    media_sensor: str | None = None
+    presence: list[str] | None = None
+    clear_delay_seconds: int | None = None
+
+
+class ZoneCreate(BaseModel):
+    name: str
+    presence: list[str] = []
+    lights: list[str] = []
+    mode: str | None = None
+
+
+class ZoneUpdate(BaseModel):
+    presence: list[str] | None = None
+    lights: list[str] | None = None
+    mode: str | None = None
+    idle_pct: float | None = None
+
+
+class LightMove(BaseModel):
+    light: str
+    zone: str
+
+
+class LightMerge(BaseModel):
+    groups: list[str]
+    name: str | None = None
+
+
+def _structure_change(fn, *args, **kwargs) -> dict[str, Any]:
+    assert runtime is not None
+    try:
+        fn(*args, **kwargs)
+    except KeyError as exc:
+        raise HTTPException(404, f"not found: {exc}")
+    except StructureError as exc:
+        raise HTTPException(400, str(exc))
+    runtime.reload()
+    return {"ok": True, "rooms": runtime.structure.rooms_raw(), "errors": runtime.structure_errors}
+
+
+@app.get("/api/house/structure")
+async def house_structure() -> dict[str, Any]:
+    """Every room as stored: light groups, zones, sensors. The database is the source of truth."""
+    assert runtime is not None
+    return {"rooms": runtime.structure.rooms_raw(), "errors": runtime.structure_errors,
+            "migrated": runtime.echo.get_structure("meta").get("migrated", {}).get("items", [])}
+
+
+@app.get("/api/house/entities")
+async def house_entities() -> dict[str, Any]:
+    """Lights, presence sensors, lux sensors and media players Home Assistant has (for pickers)."""
+    assert runtime is not None
+    out: dict[str, list[dict[str, str]]] = {"lights": [], "presence": [], "lux": [], "media": []}
+    used = {e: r for r, c in runtime.rooms.items() for ents in c.bulbs.values() for e in ents}
+    for eid, st in sorted(runtime.bridge.states.items()):
+        kind = classify(eid, st)
+        if kind:
+            out[kind].append({"entity_id": eid, "name": (st.get("attributes") or {}).get("friendly_name") or eid,
+                              "room": used.get(eid)})
+    return {"connected": runtime.bridge.connected, **out}
+
+
+@app.get("/api/house/areas/{area_id}/propose")
+async def house_area_propose(area_id: str) -> dict[str, Any]:
+    """A filled-in room for an HA area, to confirm before it's created."""
+    assert runtime is not None
+    if not runtime.bridge.connected:
+        raise HTTPException(400, "Home Assistant not connected")
+    areas, devices, entities = await runtime.bridge.fetch_registries()
+    area = next((a for a in areas if a["area_id"] == area_id), None)
+    if not area:
+        raise HTTPException(404, f"no HA area {area_id!r}")
+    ents = area_entities(area_id, devices, entities, runtime.bridge.states)
+    return propose_room(area.get("name") or area_id, ents, runtime.bridge.states, set(runtime.rooms))
+
+
+@app.post("/api/house/rooms")
+async def house_room_add(req: RoomCreate) -> dict[str, Any]:
+    return _structure_change(runtime.structure.add_room, req.room, req.friendly_name, req.lights, req.presence,
+                             req.lux_sensor, req.media_sensor, req.zones)
+
+
+@app.patch("/api/house/rooms/{room_name}")
+async def house_room_update(room_name: str, req: RoomUpdate) -> dict[str, Any]:
+    return _structure_change(runtime.structure.update_room, room_name, **req.model_dump())
+
+
+@app.delete("/api/house/rooms/{room_name}")
+async def house_room_remove(room_name: str) -> dict[str, Any]:
+    """Flint lets go of the room's lights (hands-off, not turned off). History and settings are kept."""
+    return _structure_change(runtime.structure.remove_room, room_name)
+
+
+@app.post("/api/house/rooms/{room_name}/zones")
+async def house_zone_add(room_name: str, req: ZoneCreate) -> dict[str, Any]:
+    return _structure_change(runtime.structure.add_zone, room_name, req.name, req.presence, req.lights, req.mode)
+
+
+@app.patch("/api/house/rooms/{room_name}/zones/{zone}")
+async def house_zone_update(room_name: str, zone: str, req: ZoneUpdate) -> dict[str, Any]:
+    return _structure_change(runtime.structure.update_zone, room_name, zone, **req.model_dump())
+
+
+@app.delete("/api/house/rooms/{room_name}/zones/{zone}")
+async def house_zone_remove(room_name: str, zone: str) -> dict[str, Any]:
+    return _structure_change(runtime.structure.remove_zone, room_name, zone)
+
+
+@app.post("/api/house/rooms/{room_name}/lights/move")
+async def house_light_move(room_name: str, req: LightMove) -> dict[str, Any]:
+    return _structure_change(runtime.structure.move_light, room_name, req.light, req.zone)
+
+
+@app.post("/api/house/rooms/{room_name}/lights/merge")
+async def house_light_merge(room_name: str, req: LightMerge) -> dict[str, Any]:
+    return _structure_change(runtime.structure.merge_lights, room_name, req.groups, req.name)
+
+
+@app.post("/api/house/rooms/{room_name}/lights/{group}/split")
+async def house_light_split(room_name: str, group: str) -> dict[str, Any]:
+    return _structure_change(runtime.structure.split_lights, room_name, group)
 
 
 @app.get("/api/house/areas")

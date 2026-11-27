@@ -157,6 +157,15 @@ class EchoStore:
                 PRIMARY KEY (room, week, hour, daytype)
             );
 
+            -- The house structure (rooms, zones, light groups, sensors, colour schemas): the source of truth.
+            CREATE TABLE IF NOT EXISTS structure (
+                kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (kind, key)
+            );
+
             CREATE TABLE IF NOT EXISTS model_cache (
                 room TEXT NOT NULL,
                 kind TEXT NOT NULL,
@@ -337,6 +346,22 @@ class EchoStore:
     def load_slots(self, room: str) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT data_json FROM slots WHERE room = ? ORDER BY slot", (room,)).fetchall()
         return [json.loads(r[0]) for r in rows]
+
+    def put_structure(self, kind: str, key: str, data: Any) -> None:
+        self._conn.execute(
+            """INSERT INTO structure (kind, key, data_json, updated_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT(kind, key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at""",
+            (kind, key, json.dumps(data), _utc_iso()),
+        )
+        self._conn.commit()
+
+    def get_structure(self, kind: str) -> dict[str, Any]:
+        return {r[0]: json.loads(r[1]) for r in self._conn.execute(
+            "SELECT key, data_json FROM structure WHERE kind = ? ORDER BY key", (kind,)).fetchall()}
+
+    def delete_structure(self, kind: str, key: str) -> None:
+        self._conn.execute("DELETE FROM structure WHERE kind = ? AND key = ?", (kind, key))
+        self._conn.commit()
 
     def save_model(self, room: str, kind: str, data_json: str) -> None:
         self._conn.execute(

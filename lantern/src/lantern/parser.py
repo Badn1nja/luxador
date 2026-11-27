@@ -188,10 +188,14 @@ def load_schemas_yaml(yaml_text: str) -> dict[str, dict[str, Any]]:
 
 
 def load_room_yaml(yaml_text: str) -> RoomConfig:
-    """Parse a room YAML file containing bulbs, compact rules, and overlays."""
-    data = yaml.safe_load(yaml_text) or {}
+    """Parse a legacy room YAML file (only used to migrate old files into the database)."""
+    return room_from_dict(yaml.safe_load(yaml_text) or {})
+
+
+def room_from_dict(data: dict[str, Any]) -> RoomConfig:
+    """Build a RoomConfig from its stored form (the same shape the old YAML files had)."""
     if not isinstance(data, dict) or "room" not in data:
-        raise ValueError("Room YAML must define top-level 'room' identifier")
+        raise ValueError("A room needs an id ('room')")
 
     raw_bulbs = data.get("bulbs", {})
     bulbs: dict[str, list[str]] = {}

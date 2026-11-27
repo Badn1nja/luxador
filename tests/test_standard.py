@@ -61,12 +61,14 @@ def test_validation_reports_every_error_with_its_path(bundle):
     _, errors = build_house(SETTINGS, rooms, {"rooms": {"lounge": {"lights": {"overhead": {"offset_pct": 99, "bogus": 1}}}}})
     assert any("rooms.lounge.lights.overhead.offset_pct" in e for e in errors)
     assert any("bogus" in e for e in errors)
-    _, errors = build_house(SETTINGS, rooms, {"rooms": {"lounge": {"zones": {"sofa": {"lights": ["kwn_desk"]}}}}})
-    assert any("already owned" in e for e in errors)
     _, errors = build_house(SETTINGS, rooms, {"curve": {"dark_lux": 500, "bright_lux": 100}})
     assert any("bright_lux must be greater" in e for e in errors)
-    _, errors = build_house(SETTINGS, rooms, {"rooms": {"lounge": {"zones": {"desk_kwn": {"lights": ["nope"]}}}}})
-    assert any("unknown light 'nope'" in e for e in errors)
+    # zone ownership is structure, not a setting: zones in the overrides are ignored, never half-applied
+    model, errors = build_house(SETTINGS, rooms, {"rooms": {"lounge": {"zones": {"sofa": {"lights": ["kwn_desk"]}}}}})
+    assert not errors and model.owner("lounge", "kwn_desk")[0] == "desk_kwn"
+    # settings for a light or room that no longer exists are kept aside, not an error
+    model, errors = build_house(SETTINGS, rooms, {"rooms": {"gone": {"engine": "rules"}, "lounge": {"lights": {"old": {"scale": 2}}}}})
+    assert not errors and "gone" not in model.rooms and "old" not in model.rooms["lounge"].lights
 
 
 def test_locks_cover_subtrees():
@@ -111,8 +113,14 @@ def test_own_zone_follows_its_own_presence(bundle):
     h = _house(rooms)
     ev = _eval(bundle, h, zones={"desk_kwn": True, "sofa": False})
     assert ev.roles["kw_desk_led"].brightness_pct == 100  # switch mode: on
-    h2 = _house(rooms, {"rooms": {"lounge": {"zones": {"desk_kwn": {"idle_pct": 20}}}}})
-    ev2 = _eval(bundle, h2, zones={"desk_kwn": False, "sofa": True})
+    import copy
+
+    schemas, _ = bundle
+    rooms2 = copy.deepcopy(rooms)
+    rooms2["lounge"].presence.zones["desk_kwn"].idle_pct = 20  # idle level is part of the zone (structure)
+    h2 = _house(rooms2)
+    ev2 = resolve_room(rooms2["lounge"], schemas, RoomInputs(occupied=True, ambient_lux=5.0, darkness=1.0,
+                       zones={"desk_kwn": False, "sofa": True}), datetime(2026, 11, 26, 19, 0), house=h2, overlay_weights={})
     assert ev2.roles["kwn_desk"].brightness_pct == 20
 
 
