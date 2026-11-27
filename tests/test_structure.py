@@ -79,8 +79,9 @@ def test_proposal_from_an_ha_area():
     assert ents["lights"] == ["light.bedside", "light.ceiling"]
     prop = propose_room("Bedroom", ents, states, {"lounge"})
     assert prop["room"] == "bedroom" and prop["lights"] == {"bedside": ["light.bedside"], "ceiling": ["light.ceiling"]}
-    assert prop["presence"] == ["binary_sensor.bed_radar_presence"] and prop["lux_sensor"] == "sensor.bed_lux"
-    assert prop["zones"]["zone_1"]["presence"] == ["binary_sensor.bed_radar_zone_1"]
+    assert prop["lux_sensor"] == "sensor.bed_lux"
+    assert set(prop["presence"]) == {"binary_sensor.bed_radar_presence", "binary_sensor.bed_radar_zone_1"}
+    assert prop["zones"] == {}  # zones are never guessed from names
 
 
 def test_structure_api_and_settings_resume_after_readd(tmp_path, monkeypatch):

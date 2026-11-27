@@ -400,8 +400,8 @@ class Structure:
 # ---------------------------------------------------------------------- proposals from Home Assistant
 def propose_room(area_name: str, entities: dict[str, list[str]], states: dict[str, dict[str, Any]],
                  existing_ids: set[str]) -> dict[str, Any]:
-    """A filled-in room for an HA area: one light group per light, its presence sensors, lux sensor, TV, and a
-    zone per radar zone sensor (entities whose id contains 'zone')."""
+    """A filled-in room for an HA area: one light group per light, every presence sensor on the room, lux sensor, TV.
+    Zones are never guessed from entity names: the user defines them and attaches sensors to them."""
     rid = slug(area_name)
     while rid in existing_ids:
         rid += "_2"
@@ -411,10 +411,7 @@ def propose_room(area_name: str, entities: dict[str, list[str]], states: dict[st
         while n in lights:
             n += "_2"
         lights[n] = [e]
-    pres = entities.get("presence", [])
-    zone_sensors = [e for e in pres if re.search(r"zone[_ ]?\d", e)]
-    room_sensors = [e for e in pres if e not in zone_sensors]
-    zones = {f"zone_{i + 1}": {"presence": [e], "lights": [], "mode": "own", "signals": {}} for i, e in enumerate(zone_sensors)}
+    pres = list(entities.get("presence", []))
 
     def name(e: str) -> str:
         return ((states.get(e) or {}).get("attributes") or {}).get("friendly_name") or e
@@ -423,8 +420,8 @@ def propose_room(area_name: str, entities: dict[str, list[str]], states: dict[st
         "room": rid,
         "friendly_name": area_name,
         "lights": lights,
-        "presence": room_sensors,
-        "zones": zones,
+        "presence": pres,
+        "zones": {},
         "lux_sensor": (entities.get("lux") or [None])[0],
         "media_sensor": (entities.get("media") or [None])[0],
         "names": {e: name(e) for kind in entities.values() for e in kind},
