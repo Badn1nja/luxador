@@ -405,8 +405,8 @@ class EngineRuntime:
         else:
             sim = self.sim_overrides.get(room_name, RoomInputs())
             sim_states = dict(sim.entity_states)
-            if rcfg.media_sensor:  # let the sandbox TV dropdown drive any signal bound to the media player
-                sim_states[rcfg.media_sensor] = {"state": sim.media_state}
+            for me in rcfg.media_sensors:  # let the sandbox TV dropdown drive any signal bound to a media player
+                sim_states[me] = {"state": sim.media_state}
             upd = self.presence.update(
                 rcfg, sim_states, self.net, now,
                 zone_overrides=sim.zones, occupied_override=sim.occupied, hold=False, settle_seconds=0,
@@ -456,7 +456,7 @@ class EngineRuntime:
             lux = 0.0
             lux_source = "unavailable"
             warnings.append(f"Lux sensor {rcfg.lux_sensor or '(none)'} is {lux_raw!r}: darkness comes from the sun instead")
-        media = states.get(rcfg.media_sensor or "", {}).get("state", "off")
+        media = sensor_math.combine_media(states, rcfg.media_sensors)
         bedtime = bool(rcfg.bedtime_entity) and states.get(rcfg.bedtime_entity or "", {}).get("state") == "on"
         unavailable = [s.key for s in snap.signals if not s.available]
         if unavailable:
@@ -530,6 +530,7 @@ class EngineRuntime:
                 "bedtime_entity": rcfg.bedtime_entity,
                 "lux_sensor": rcfg.lux_sensor,
                 "media_sensor": rcfg.media_sensor,
+                "media_sensors": rcfg.media_sensors,
                 "bulb_lux_gain": rcfg.bulb_lux_gain,
                 "punch_half_life_minutes": rcfg.punch_half_life_minutes,
                 "rules": [r.raw for r in rcfg.rules],
@@ -1288,13 +1289,14 @@ class RoomCreate(BaseModel):
     presence: list[str] = []
     lux_sensor: str | None = None
     media_sensor: str | None = None
+    media_sensors: list[str] = []
     zones: dict[str, dict[str, Any]] = {}
 
 
 class RoomUpdate(BaseModel):
     friendly_name: str | None = None
     lux_sensor: str | None = None
-    media_sensor: str | None = None
+    media_sensors: list[str] | None = None
     presence: list[str] | None = None
     clear_delay_seconds: int | None = None
 
@@ -1498,7 +1500,7 @@ async def house_area_propose(area_id: str) -> dict[str, Any]:
 @app.post("/api/house/rooms")
 async def house_room_add(req: RoomCreate) -> dict[str, Any]:
     return _structure_change(runtime.structure.add_room, req.room, req.friendly_name, req.lights, req.presence,
-                             req.lux_sensor, req.media_sensor, req.zones)
+                             req.lux_sensor, ([req.media_sensor] if req.media_sensor else []) + req.media_sensors, req.zones)
 
 
 @app.patch("/api/house/rooms/{room_name}")

@@ -36,7 +36,7 @@ def room_entities(cfg: RoomConfig) -> set[str]:
         ids.update(z.presence)
         ids.update(s.entity for s in z.signals if s.entity)
     ids.update(s.entity for s in cfg.presence.signals if s.entity)
-    ids.update(e for e in (cfg.lux_sensor, cfg.media_sensor) if e)
+    ids.update(e for e in (cfg.lux_sensor, *cfg.media_sensors) if e)
     return ids
 
 

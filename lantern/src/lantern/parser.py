@@ -156,6 +156,20 @@ def _parse_signals(raw: Any, where: str) -> list[SignalSpec]:
     return out
 
 
+def _media_list(data: dict[str, Any]) -> list[str]:
+    """media_sensors (a list), or the older single media_sensor."""
+    items = data.get("media_sensors")
+    if items is None and data.get("media_sensor"):
+        items = [data["media_sensor"]]
+    if isinstance(items, str):
+        items = [items]
+    out: list[str] = []
+    for e in items or []:
+        if e and str(e) not in out:
+            out.append(str(e))
+    return out
+
+
 def _parse_zone(name: str, raw: Any) -> ZoneConfig:
     """Zone = shorthand entity string, or `{presence: [...], signals: {...}}`."""
     if isinstance(raw, str):
@@ -248,7 +262,8 @@ def room_from_dict(data: dict[str, Any]) -> RoomConfig:
         friendly_name=str(data.get("friendly_name", data["room"])),
         presence=presence,
         lux_sensor=data.get("lux_sensor"),
-        media_sensor=data.get("media_sensor"),
+        media_sensor=(_media_list(data) or [None])[0],
+        media_sensors=_media_list(data),
         bedtime_entity=data.get("bedtime_entity", "input_boolean.bedtime_mode"),
         standard=dict(data.get("standard") or {}),
         bulb_lux_gain={str(k): float(v) for k, v in data.get("bulb_lux_gain", {}).items()},

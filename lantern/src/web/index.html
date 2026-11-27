@@ -1874,7 +1874,7 @@
         if (!res.ok) { host.innerHTML = `<div class="std-err">${esc(p.detail || "Couldn't read that area")}</div>`; return; }
       } else {
         const free = (SX.ents.lights || []).filter(x => !x.room);
-        p = { room: "", friendly_name: "", lights: {}, presence: [], zones: {}, lux_sensor: null, media_sensor: null,
+        p = { room: "", friendly_name: "", lights: {}, presence: [], zones: {}, lux_sensor: null, media_sensors: [],
               candidates: { lights: free.map(x => x.entity_id), presence: (SX.ents.presence || []).map(x => x.entity_id),
                             lux: (SX.ents.lux || []).map(x => x.entity_id), media: (SX.ents.media || []).map(x => x.entity_id) } };
       }
@@ -1894,7 +1894,7 @@
           <div>${Object.entries(p.zones).map(([z, zr]) => box("arZone", z, `${esc(z)}: <code>${esc(zr.presence[0])}</code>`, true)).join("<br>")}</div></div>` : ""}
         <div class="std-ctl" style="margin-top:8px;">
           <label><span class="t">Lux (indoor)</span><select id="arLux"><option value="">— none —</option>${(p.candidates.lux || []).map(e => `<option value="${esc(e)}" ${e === p.lux_sensor ? "selected" : ""}>${esc(entName(e))}</option>`).join("")}</select></label>
-          <label><span class="t">TV / media</span><select id="arMedia"><option value="">— none —</option>${(p.candidates.media || []).map(e => `<option value="${esc(e)}" ${e === p.media_sensor ? "selected" : ""}>${esc(entName(e))}</option>`).join("")}</select></label>
+          <label><span class="t">TV / media</span><select id="arMedia"><option value="">— none —</option>${(p.candidates.media || []).map(e => `<option value="${esc(e)}" ${(p.media_sensors || []).includes(e) ? "selected" : ""}>${esc(entName(e))}</option>`).join("")}</select></label>
         </div>
         <div style="margin-top:10px;"><button class="btn primary" onclick="createRoom()">Create room</button> <button class="btn" onclick="document.getElementById('addRoomForm').innerHTML=''">Cancel</button></div>
         <div id="arMsg" class="muted" style="margin-top:6px;"></div></div>`;
@@ -1914,7 +1914,7 @@
       picked("arZone").forEach(z => zones[z] = p.zones[z]);
       const body = { room: document.getElementById("arId").value.trim(), friendly_name: document.getElementById("arName").value.trim(),
                      lights, presence: picked("arPres"), lux_sensor: document.getElementById("arLux").value || null,
-                     media_sensor: document.getElementById("arMedia").value || null, zones };
+                     media_sensors: [document.getElementById("arMedia").value].filter(Boolean), zones };
       const out = await sReq("./api/house/rooms", body);
       if (out.error) { document.getElementById("arMsg").textContent = out.error; return; }
       document.getElementById("addRoomForm").innerHTML = "";
@@ -1996,6 +1996,8 @@
     }
 
     // Echo: presence sensors per scope (+ clear delay, TV signal, zone mode)
+    const suMedia = (list) => suDo(sReq(`./api/house/rooms/${ROOM}`, { media_sensors: list }, "PATCH"));
+    const suMediaAdd = (e) => e && suMedia([...(suRoom().media_sensors || []), e]);
     const suRoomPres = (list) => suDo(sReq(`./api/house/rooms/${ROOM}`, { presence: list }, "PATCH"));
     const suRoomPresAdd = (e) => e && suRoomPres([...(suRoom().presence.sensors || []), e]);
     const suZonePres = (z, list) => suDo(sReq(`./api/house/rooms/${ROOM}/zones/${z}`, { presence: list }, "PATCH"));
@@ -2011,7 +2013,8 @@
           ${suChips(pres, e => `suRoomPres(${q(pres.filter(x => x !== e))})`)} ${adder("suRoomPresAdd(this.value)")}
           <div class="std-ctl" style="margin-top:6px;">
             <label><span class="t">Clear after</span><input type="number" min="0" max="3600" step="30" style="width:90px" value="${(raw.presence || {}).clear_delay_seconds ?? 180}" onchange="suDo(sReq('./api/house/rooms/${ROOM}', {clear_delay_seconds: +this.value}, 'PATCH'))"/> s</label>
-            <label><span class="t">TV / media</span><select onchange="suDo(sReq('./api/house/rooms/${ROOM}', {media_sensor: this.value}, 'PATCH'))">${suPick("media", raw.media_sensor)}</select></label>
+            <label><span class="t">TV / media</span><span>${suChips(raw.media_sensors || [], e => `suMedia(${q((raw.media_sensors || []).filter(x => x !== e))})`)}
+              <select onchange="suMediaAdd(this.value);this.value=''">${entityOptions("media", raw.media_sensors || []).replace("add…", "+ add a device…")}</select></span></label>
           </div></div></div>`;
       Object.entries(zones).forEach(([z, zr]) => {
         const zp = zr.presence || [];

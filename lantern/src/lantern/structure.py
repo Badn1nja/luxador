@@ -42,6 +42,11 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
     """Light groups are always lists of entities (old files allowed `group: light.x`)."""
     bulbs = raw.get("bulbs") or {}
     raw["bulbs"] = {g: ([e] if isinstance(e, str) else list(e)) for g, e in bulbs.items()}
+    media = list(raw.get("media_sensors") or [])
+    old = raw.pop("media_sensor", None)  # before v0.10 a room had exactly one
+    if old and old not in media:
+        media.append(old)
+    raw["media_sensors"] = media
     return raw
 
 
@@ -137,7 +142,7 @@ class Structure:
         return cfg
 
     def add_room(self, room: str, friendly_name: str, lights: dict[str, list[str]], presence: list[str],
-                 lux_sensor: str | None = None, media_sensor: str | None = None,
+                 lux_sensor: str | None = None, media_sensors: list[str] | None = None,
                  zones: dict[str, dict[str, Any]] | None = None) -> RoomConfig:
         if room in self.rooms_raw():
             raise StructureError(f"room {room!r} already exists")
@@ -146,7 +151,7 @@ class Structure:
             "friendly_name": friendly_name or room,
             "presence": {"sensors": list(presence), "clear_delay_seconds": 180, "zones": zones or {}},
             "lux_sensor": lux_sensor or None,
-            "media_sensor": media_sensor or None,
+            "media_sensors": [e for e in (media_sensors or []) if e],
             "bulbs": {g: list(e) for g, e in lights.items()},
         }
         return self.save_room(raw, f"added room {friendly_name or room}")
@@ -159,9 +164,11 @@ class Structure:
 
     def update_room(self, room: str, **fields: Any) -> RoomConfig:
         raw = self.room_raw(room)
-        for k in ("friendly_name", "lux_sensor", "media_sensor"):
+        for k in ("friendly_name", "lux_sensor"):
             if k in fields and fields[k] is not None:
                 raw[k] = fields[k] or None
+        if fields.get("media_sensors") is not None:
+            raw["media_sensors"] = list(dict.fromkeys(e for e in fields["media_sensors"] if e))
         if fields.get("presence") is not None:
             raw.setdefault("presence", {})["sensors"] = list(fields["presence"])
         if fields.get("clear_delay_seconds") is not None:
@@ -254,7 +261,10 @@ class Structure:
         elif kind in ("lux", "media"):
             if scoped:
                 raise StructureError(f"a {kind} sensor belongs to the room, not a zone")
-            raw["lux_sensor" if kind == "lux" else "media_sensor"] = entity
+            if kind == "lux":
+                raw["lux_sensor"] = entity
+            elif entity not in (raw.get("media_sensors") or []):
+                raw.setdefault("media_sensors", []).append(entity)
             what = f"{kind} sensor {entity} attached to the room"
         else:
             raise StructureError(f"{entity} isn't a light, presence, lux or media entity")
@@ -266,7 +276,7 @@ class Structure:
         return (entity in {e for ents in (raw.get("bulbs") or {}).values() for e in ents}
                 or entity in (pres.get("sensors") or [])
                 or any(entity in (z.get("presence") or []) for z in (pres.get("zones") or {}).values())
-                or entity in (raw.get("lux_sensor"), raw.get("media_sensor")))
+                or entity == raw.get("lux_sensor") or entity in (raw.get("media_sensors") or []))
 
     def unassign_entity(self, room: str, entity: str) -> RoomConfig:
         raw = self.room_raw(room)
@@ -277,9 +287,9 @@ class Structure:
         pres["sensors"] = [e for e in (pres.get("sensors") or []) if e != entity]
         for z in zones.values():
             z["presence"] = [e for e in (z.get("presence") or []) if e != entity]
-        for k in ("lux_sensor", "media_sensor"):
-            if raw.get(k) == entity:
-                raw[k] = None
+        if raw.get("lux_sensor") == entity:
+            raw["lux_sensor"] = None
+        raw["media_sensors"] = [e for e in (raw.get("media_sensors") or []) if e != entity]
         for g in list(raw.get("bulbs") or {}):
             raw["bulbs"][g] = [e for e in raw["bulbs"][g] if e != entity]
             if not raw["bulbs"][g]:
@@ -423,7 +433,7 @@ def propose_room(area_name: str, entities: dict[str, list[str]], states: dict[st
         "presence": pres,
         "zones": {},
         "lux_sensor": (entities.get("lux") or [None])[0],
-        "media_sensor": (entities.get("media") or [None])[0],
+        "media_sensors": list((entities.get("media") or [])[:1]),
         "names": {e: name(e) for kind in entities.values() for e in kind},
         "candidates": entities,
     }

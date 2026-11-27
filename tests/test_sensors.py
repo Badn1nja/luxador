@@ -51,3 +51,22 @@ def test_attachments_say_where_everything_is():
     assert where["sensor.outdoor_lux"] == ["home"]
     assert where["light.lamp"] == ["Lounge"] and where["light.strip"] == ["Lounge › desk"]
     assert where["binary_sensor.radar"] == ["Lounge"] and where["sensor.desk_lux"] == ["Lounge › desk"]
+
+
+def test_several_media_devices_combine_into_one_state():
+    st = {"media_player.tv": {"state": "off"}, "media_player.console": {"state": "playing"}, "media_player.dead": {"state": "unavailable"}}
+    assert sm.combine_media(st, ["media_player.tv", "media_player.console"]) == "playing"
+    assert sm.combine_media(st, ["media_player.tv", "media_player.dead"]) == "off"
+    assert sm.combine_media(st, ["media_player.dead"]) == "off" and sm.combine_media(st, []) == "off"
+
+
+def test_room_with_the_old_single_media_sensor_becomes_a_list(tmp_path):
+    from lantern.echo import EchoStore
+    from lantern.structure import Structure
+
+    s = Structure(EchoStore(tmp_path / "e.db"))
+    s.echo.put_structure("room", "den", {"room": "den", "friendly_name": "Den", "media_sensor": "media_player.old", "bulbs": {}})
+    assert s.room_raw("den")["media_sensors"] == ["media_player.old"] and "media_sensor" not in s.room_raw("den")
+    cfg = s.update_room("den", media_sensors=["media_player.old", "media_player.new", "media_player.new"])
+    assert cfg.media_sensors == ["media_player.old", "media_player.new"] and cfg.media_sensor == "media_player.old"
+    assert s.update_room("den", media_sensors=[]).media_sensors == []

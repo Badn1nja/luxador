@@ -92,6 +92,16 @@ def clean(raw: Any, profile: dict[str, Any], prev: float | None = None, dt_secon
     return {"valid": True, "raw": value, "lux": round(lux, 2), "relative": relative_brightness(lux, profile)}
 
 
+def combine_media(states: dict[str, dict[str, Any]], entities: list[str]) -> str:
+    """One state for several media devices: playing if any is, else the first real state, else off."""
+    seen = [str((states.get(e) or {}).get("state", "unavailable")) for e in entities]
+    for want in ("playing", "buffering"):
+        if want in seen:
+            return want
+    real = [s for s in seen if s not in ("unavailable", "unknown")]
+    return real[0] if real else "off"
+
+
 def attachments(rooms: dict[str, dict[str, Any]], home_entities: list[str]) -> dict[str, list[str]]:
     """Where each entity is attached: 'home', 'room', or 'room › zone'. An entity can be in more than one place."""
     out: dict[str, list[str]] = {}
@@ -114,7 +124,8 @@ def attachments(rooms: dict[str, dict[str, Any]], home_entities: list[str]) -> d
         for e in pres.get("sensors") or []:
             add(e, label)
         add(raw.get("lux_sensor"), label)
-        add(raw.get("media_sensor"), label)
+        for e in raw.get("media_sensors") or []:
+            add(e, label)
         for z, zr in zones.items():
             for e in zr.get("presence") or []:
                 add(e, f"{label} › {z}")

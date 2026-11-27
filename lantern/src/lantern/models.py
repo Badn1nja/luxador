@@ -109,7 +109,8 @@ class RoomConfig(BaseModel):
     friendly_name: str = ""
     presence: PresenceConfig = Field(default_factory=PresenceConfig)
     lux_sensor: str | None = None
-    media_sensor: str | None = None
+    media_sensor: str | None = None  # the first of media_sensors (kept for older readers)
+    media_sensors: list[str] = Field(default_factory=list)
     bedtime_entity: str | None = "input_boolean.bedtime_mode"
     standard: dict[str, Any] = Field(default_factory=dict)  # `standard:` block: engine + per-light settings
     bulb_lux_gain: dict[str, float] = Field(default_factory=dict)
