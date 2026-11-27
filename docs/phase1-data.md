@@ -58,7 +58,7 @@ Two honest tools, no hidden model:
 * **What goes together** (`together.py`): every signal as yes/no per 5 minutes. For each one: what's usually
   true at the same time (P(B | A) and lift), its usual hours per weekday/weekend, when it typically starts
   (each cluster separately, so a 07:00 and a 17:30 start are never averaged into 12:15), and P(on | this hour,
-  this kind of day) as the prediction for *now*. Network devices from OPNsense join as signals once connected.
+  this kind of day) as the prediction for *now*.
 * **Learned patterns** (discovered states, below): the same grid grouped into recurring contexts, used under
   the hood to suggest structure and to carry switchboard pins.
 

@@ -10,7 +10,7 @@ Three parts, one loop:
 
 | | Part | Does |
 |---|---|---|
-| 📊 | **Echo** · the data | Remembers what the house did: Home Assistant history, live presence and zones, lux, TV, network devices (OPNsense), on a 5-minute grid. |
+| 📊 | **Echo** · the data | Remembers what the house did: Home Assistant history, live presence and zones, lux and media devices, on a 5-minute grid. |
 | 🐱 | **Luxie** · the learner | Finds what goes together and when ("TV on → sofa, weekdays 20:00–22:00"), and turns it into suggestions. Never changes anything silently. |
 | 🔥 | **Flint** · the engine | presence × darkness → the general curve → each light's settings → Home Assistant. Explains every level it sets. |
 

@@ -392,8 +392,8 @@
 
 
       <div class="grid" style="margin-bottom:14px;">
-        <div class="card">
-          <div class="row"><h2>Network devices (OPNsense)</h2><span id="netPill" class="pill"></span></div>
+        <div class="card" hidden>
+          <div class="row"><h2>Network devices</h2><span id="netPill" class="pill"></span></div>
           <div class="muted" style="margin-bottom:8px;">Device traffic lined up against zone presence. <strong>zone</strong> = busy when that zone is occupied; <strong>room</strong> = follows a person around; <strong>background</strong> = busy whether anyone's home or not, so it's ignored.</div>
           <div id="devSummary" class="muted" style="margin-bottom:6px;"></div>
           <table id="netTable"><thead><tr><th>Device</th><th>Kind</th><th>Evidence</th><th></th></tr></thead><tbody></tbody></table>
@@ -1500,8 +1500,7 @@
       document.getElementById("houseSummary").textContent = data.ha_connected
         ? `${data.rooms.length} room(s) · reading Home Assistant live`
         : "Not connected to Home Assistant, so there's nothing real to show yet.";
-      document.getElementById("houseBadges").innerHTML = `
-        <span class="pill ${data.opnsense.ready ? 'ok' : (data.opnsense.configured ? 'alert' : '')}">OPNsense: ${data.opnsense.ready ? 'live' : (data.opnsense.configured ? 'error' : 'not set up')}</span>`;
+      document.getElementById("houseBadges").innerHTML = "";
       document.getElementById("overviewRooms").innerHTML = `
         <div class="card dashed" style="opacity:1;">
           <h2>+ Add a room</h2>
@@ -1596,7 +1595,7 @@
           <button class="btn" onclick="decideDevice('${esc(d.host)}','ignored')">Ignore</button>`;
         return `<tr><td><strong>${esc(d.hostname || d.host)}</strong><div class="muted">${esc(d.host)} · ${d.active_minutes} busy min${d.enough_data ? "" : " (not enough yet)"}</div></td>
           <td><span class="pill ${kindCls[d.kind]}">${d.kind}</span></td><td class="muted">${ev}</td><td>${action}</td></tr>`;
-      }).join("") || `<tr><td colspan="4" class="muted">${!net.configured ? "Set OPNsense url / api_key / api_secret in the app's Configuration tab to add network devices as a data source."
+      }).join("") || `<tr><td colspan="4" class="muted">${!net.configured ? "Network devices are not a data source yet."
           : !net.ready ? esc(net.last_error || "waiting for first poll")
           : "Collecting: devices appear once they've been busy while presence was being recorded."}</td></tr>`;
     }

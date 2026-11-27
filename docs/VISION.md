@@ -63,7 +63,6 @@ That loop is the product. Data, learning and the cat exist to tune it and to sho
 | Piece | Why park it |
 |---|---|
 | Four overlapping "state" systems: presence patterns, intent model + labels + layering, discovered states + switchboard pins | Useful later; right now it's four answers to one question |
-| OPNsense device↔zone learning | Never tested against a real OPNsense box |
 | Yearly sun model + seasonal lift | Real maths; off by default; tuning belongs in Phase 3/4 |
 | Legacy rules engine, overlays YAML studio, rule add/remove | Kept as the fallback engine; editing UI hidden |
 
