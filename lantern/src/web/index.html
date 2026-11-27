@@ -42,6 +42,15 @@
     .pill.alert { border-color: var(--red); color: var(--red); }
     .pill.info { border-color: var(--teal); color: var(--teal); }
 
+    .top-nav button.parked { display: none; }
+    .top-nav.labs button.parked { display: inline-block; }
+    .su-tabs { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+    .su-tabs button { background: var(--panel); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+    .su-tabs button.active { color: var(--text); border-color: var(--teal); }
+    .su-scope { border-top: 1px solid var(--border); padding: 10px 0; display: grid; grid-template-columns: minmax(140px, 200px) 1fr; gap: 10px; }
+    @media (max-width: 640px) { .su-scope { grid-template-columns: 1fr; } }
+    .su-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .su-grp { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; margin: 0 0 6px; }
     .top-nav {
       display: flex; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border);
       background: var(--panel); align-items: center; flex-wrap: wrap;
@@ -253,10 +262,12 @@
     <label class="inline" style="margin-left:auto;color:var(--muted);">Room
       <select id="roomPicker" onchange="selectRoom(this.value)"></select>
     </label>
-    <button id="nav-flint" onclick="showMainView('flint')">🔥 Flint</button>
-    <button id="nav-echo" onclick="showMainView('echo')">📊 Echo</button>
-    <button id="nav-luxie" onclick="showMainView('luxie')">🐱 Luxie</button>
+    <button id="nav-setup" onclick="showMainView('setup')">🧩 Setup</button>
+    <button id="nav-flint" class="parked" onclick="showMainView('flint')">🔥 Flint</button>
+    <button id="nav-echo" class="parked" onclick="showMainView('echo')">📊 Echo</button>
+    <button id="nav-luxie" class="parked" onclick="showMainView('luxie')">🐱 Luxie</button>
     <button id="nav-logs" onclick="showMainView('logs')">📜 Logs</button>
+    <button id="nav-labs" onclick="toggleLabs()" title="Parked: curve, day chart, grid, learned patterns">🧪 Labs</button>
   </nav>
 
   <main>
@@ -290,6 +301,18 @@
       </div>
     </section>
 
+
+    <!-- SETUP: the foundation. Rooms, zones, and which entities belong where. Associations only. -->
+    <section id="view-setup" class="view">
+      <div class="card">
+        <div class="row"><h2 id="suTitle">Setup</h2>
+          <span><button class="btn danger" onclick="suRemoveRoom()">Remove room</button></span></div>
+        <div class="muted">Home › Room › Zone. Say which entities belong to the room in general, and which to each zone. Nothing here changes a light: it is only the map the rest builds on.</div>
+        <div class="su-tabs" id="suTabs"></div>
+        <div id="suMsg" class="muted" style="min-height:1.3em;"></div>
+        <div id="suBody"></div>
+      </div>
+    </section>
 
     <!-- LUXIE LOGS & DATA -->
     <!-- DATA LAB (Phase 1 · Data): how the system sees the house -->
@@ -530,6 +553,7 @@
       document.getElementById("view-" + name).classList.add("active");
       document.getElementById("nav-" + name).classList.add("active");
       if (name === "overview") loadOverview();
+      if (name === "setup") loadSetup();
       if (name === "logs") loadLogs();
       if (name === "echo") loadDataLab();
       if (name === "flint") loadFlint();
@@ -1447,8 +1471,9 @@
       ROOM = name;
       try { localStorage.setItem("lantern.room", name); } catch (e) {}
       applyRoomChrome();
-      showMainView("flint");
+      showMainView("setup");
     }
+    function toggleLabs() { document.querySelector(".top-nav").classList.toggle("labs"); }
 
     function updateHeaderBadges(haConnected, dryRun) {
       document.getElementById("headerBadges").innerHTML = `
@@ -1482,7 +1507,7 @@
             <div><div class="kpi">${r.active_roles}/${r.total_roles}</div><div class="muted">lights would be on</div></div>
           </div>` : ""}
           ${(r.warnings || []).map(w => `<div class="muted" style="color:var(--gold);margin-bottom:6px;">⚠ ${esc(w)}</div>`).join("")}
-          <button class="btn primary" onclick="openRoom('${esc(r.room)}')">Open in Flint</button>
+          <button class="btn primary" onclick="openRoom('${esc(r.room)}')">Set up</button>
           <button class="btn danger" onclick="removeRoom('${esc(r.room)}', '${esc(r.friendly_name)}')">Remove</button>
         </div>`).join("");
       loadHouseAreas();
@@ -1892,6 +1917,140 @@
       host.innerHTML = `<select id="arArea"><option value="">Pick an HA area…</option>${open.map(a => `<option value="${esc(a.area_id)}">${esc(a.name)} (${a.counts.lights} lights)</option>`).join("")}</select>
         <button class="btn primary" onclick="startAddRoom(document.getElementById('arArea').value)">Use this area</button>
         <button class="btn" onclick="startAddRoom()">Blank room</button>`;
+    }
+
+
+    // ---------------------------------------------------------------- SETUP: rooms, zones, entities (associations only)
+    const SU = { tab: "general" };
+    const SU_TABS = [["general", "General"], ["echo", "Echo · presence"], ["luxie", "Luxie · lux"], ["flint", "Flint · lights"]];
+    const q = (v) => JSON.stringify(v).replace(/"/g, "&quot;");
+
+    async function loadSetup() {
+      await loadEntities();
+      SX.struct = await fetch("./api/house/structure").then(r => r.json());
+      renderSetup();
+    }
+    async function suDo(promise, msg) {
+      const out = await promise;
+      const m = document.getElementById("suMsg");
+      if (out.error) { m.innerHTML = `<span style="color:var(--red)">Not changed: ${esc(out.error)}</span>`; return; }
+      m.textContent = msg || "Saved.";
+      SX.struct = { rooms: out.rooms, errors: out.errors };
+      renderSetup();
+    }
+    const suRoom = () => SX.struct?.rooms?.[ROOM];
+    function suScopes(raw) {
+      const zones = (raw.presence || {}).zones || {};
+      return [["room", "Room (general)", null], ...Object.keys(zones).map(z => [z, z, zones[z]])];
+    }
+    function suChips(list, removeJs) {
+      return `<span class="su-chips">${list.map(e => `<span class="std-chip" title="${esc(e)}">${esc(entName(e))} <a href="#" onclick="${removeJs(e)};return false;" aria-label="remove">✕</a></span>`).join("") || `<span class="muted">none</span>`}</span>`;
+    }
+    function suPick(kind, cur, none) {
+      return `<option value="">${none || "— none —"}</option>` + (SX.ents?.[kind] || []).map(x => `<option value="${esc(x.entity_id)}" ${x.entity_id === cur ? "selected" : ""}>${esc(x.name)} (${esc(x.entity_id)})</option>`).join("");
+    }
+
+    function renderSetup() {
+      const raw = suRoom();
+      const body = document.getElementById("suBody");
+      if (!raw) { body.innerHTML = `<div class="muted">No room selected. Add one on Home.</div>`; return; }
+      document.getElementById("suTitle").textContent = `${raw.friendly_name || ROOM} · setup`;
+      document.getElementById("suTabs").innerHTML = SU_TABS.map(([k, l]) => `<button class="${SU.tab === k ? "active" : ""}" onclick="SU.tab='${k}';renderSetup()">${l}</button>`).join("");
+      body.innerHTML = ({ general: suGeneral, echo: suEcho, luxie: suLuxie, flint: suFlint })[SU.tab](raw);
+    }
+
+    // General: the room's name and its zones
+    function suGeneral(raw) {
+      const zones = (raw.presence || {}).zones || {};
+      const rows = Object.entries(zones).map(([z, zr]) => `<div class="su-scope"><div><strong>${esc(z)}</strong></div>
+        <div class="row"><span class="muted">${(zr.presence || []).length} presence · ${zr.lux_sensor ? "own lux" : "room lux"} · ${(zr.lights || []).length} light group(s)</span>
+        <button class="btn danger" onclick="suZoneDel('${esc(z)}')">Delete zone</button></div></div>`).join("");
+      return `<div class="std-ctl"><label><span class="t">Room name</span><input value="${esc(raw.friendly_name || "")}" onchange="suDo(sReq('./api/house/rooms/${ROOM}', {friendly_name: this.value}, 'PATCH'), 'Renamed.')"/></label></div>
+        <h3 style="margin-top:12px;">Zones <button class="btn" onclick="suZoneAdd()">+ Add zone</button></h3>
+        <div class="muted">A zone is a part of the room (sofa, desk). Without its own presence sensor it is just a named group that follows the room.</div>
+        ${rows || `<div class="muted" style="margin-top:6px;">No zones yet.</div>`}`;
+    }
+    function suZoneAdd() {
+      const name = (prompt("Zone name (a–z, 0–9, _), e.g. desk") || "").trim().toLowerCase();
+      if (name) suDo(sReq(`./api/house/rooms/${ROOM}/zones`, { name }), `Zone ${name} added.`);
+    }
+    function suZoneDel(z) {
+      if (confirm(`Delete zone ${z}? Its lights go back to the room in general.`)) suDo(sReq(`./api/house/rooms/${ROOM}/zones/${z}`, null, "DELETE"), `Zone ${z} deleted.`);
+    }
+    function suRemoveRoom() {
+      if (!confirm(`Remove ${suRoom()?.friendly_name || ROOM}?\n\nIts lights are released (left exactly as they are). History and settings are kept, so adding it back resumes.`)) return;
+      sReq(`./api/house/rooms/${ROOM}`, null, "DELETE").then(async () => { await initRooms(); showMainView("overview"); });
+    }
+
+    // Echo: presence sensors per scope (+ clear delay, TV signal, zone mode)
+    const suRoomPres = (list) => suDo(sReq(`./api/house/rooms/${ROOM}`, { presence: list }, "PATCH"));
+    const suRoomPresAdd = (e) => e && suRoomPres([...(suRoom().presence.sensors || []), e]);
+    const suZonePres = (z, list) => suDo(sReq(`./api/house/rooms/${ROOM}/zones/${z}`, { presence: list }, "PATCH"));
+    const suZonePresAdd = (z, e) => e && suZonePres(z, [...(suRoom().presence.zones[z].presence || []), e]);
+
+    function suEcho(raw) {
+      const pres = (raw.presence || {}).sensors || [];
+      const zones = (raw.presence || {}).zones || {};
+      const used = [...pres, ...Object.values(zones).flatMap(z => z.presence || [])];
+      const adder = (js) => `<select onchange="${js};this.value=''">${entityOptions("presence", used).replace("add…", "+ add a sensor…")}</select>`;
+      let out = `<div class="muted">Echo watches who is where. Your general radar goes on the room; zone sensors go on their zone.</div>
+        <div class="su-scope"><div><strong>Room (general)</strong></div><div>
+          ${suChips(pres, e => `suRoomPres(${q(pres.filter(x => x !== e))})`)} ${adder("suRoomPresAdd(this.value)")}
+          <div class="std-ctl" style="margin-top:6px;">
+            <label><span class="t">Clear after</span><input type="number" min="0" max="3600" step="30" style="width:90px" value="${(raw.presence || {}).clear_delay_seconds ?? 180}" onchange="suDo(sReq('./api/house/rooms/${ROOM}', {clear_delay_seconds: +this.value}, 'PATCH'))"/> s</label>
+            <label><span class="t">TV / media</span><select onchange="suDo(sReq('./api/house/rooms/${ROOM}', {media_sensor: this.value}, 'PATCH'))">${suPick("media", raw.media_sensor)}</select></label>
+          </div></div></div>`;
+      Object.entries(zones).forEach(([z, zr]) => {
+        const zp = zr.presence || [];
+        out += `<div class="su-scope"><div><strong>${esc(z)}</strong></div><div>
+          ${suChips(zp, e => `suZonePres('${esc(z)}', ${q(zp.filter(x => x !== e))})`)} ${adder(`suZonePresAdd('${esc(z)}', this.value)`)}
+          <div class="std-ctl" style="margin-top:6px;"><label><span class="t">Mode</span><select onchange="suDo(sReq('./api/house/rooms/${ROOM}/zones/${esc(z)}', {mode: this.value}, 'PATCH'))">${["join", "own"].map(m => `<option ${m === (zr.mode || "join") ? "selected" : ""}>${m}</option>`).join("")}</select></label></div>
+        </div></div>`;
+      });
+      return out;
+    }
+
+    // Luxie: one lux sensor per scope
+    function suLuxie(raw) {
+      let out = `<div class="muted">Luxie owns light levels: which sensor says how bright it is. A zone with none uses the room's.</div>
+        <div class="su-scope"><div><strong>Room (general)</strong></div><div><select onchange="suDo(sReq('./api/house/rooms/${ROOM}', {lux_sensor: this.value}, 'PATCH'))">${suPick("lux", raw.lux_sensor)}</select></div></div>`;
+      Object.entries((raw.presence || {}).zones || {}).forEach(([z, zr]) => {
+        out += `<div class="su-scope"><div><strong>${esc(z)}</strong></div><div><select onchange="suDo(sReq('./api/house/rooms/${ROOM}/zones/${esc(z)}', {lux_sensor: this.value}, 'PATCH'))">${suPick("lux", zr.lux_sensor, "— same as room —")}</select></div></div>`;
+      });
+      return out;
+    }
+
+    // Flint: light groups per scope
+    function suFlint(raw) {
+      const bulbs = raw.bulbs || {};
+      const scopes = suScopes(raw);
+      const owner = {};
+      scopes.forEach(([k, , zr]) => (zr?.lights || []).forEach(l => owner[l] = k));
+      const taken = new Set(Object.values(bulbs).flat());
+      const free = (SX.ents?.lights || []).filter(x => !taken.has(x.entity_id) && !x.room);
+      let out = `<div class="muted">Flint drives the lights. Each light group is owned by the room or one zone. Tick groups to merge bulbs that always act as one.</div>
+        <div style="margin:6px 0;"><button class="btn" ${SX.sel.size < 2 ? "disabled" : ""} onclick="suMerge()">Merge selected${SX.sel.size ? ` (${SX.sel.size})` : ""}</button></div>`;
+      scopes.forEach(([k, label]) => {
+        const mine = Object.keys(bulbs).filter(g => (owner[g] || "room") === k);
+        out += `<div class="su-scope"><div><strong>${esc(label)}</strong></div><div>
+          ${mine.map(g => `<div class="su-grp"><label class="inline"><input type="checkbox" ${SX.sel.has(g) ? "checked" : ""} onchange="suSel('${esc(g)}', this.checked)"/> <strong>${esc(g)}</strong></label>
+            <span class="muted">${bulbs[g].map(e => esc(entName(e))).join(", ")}</span>
+            <span style="float:right"><select title="owned by" onchange="suDo(sReq('./api/house/rooms/${ROOM}/lights/move', {light:'${esc(g)}', zone:this.value}))">${scopes.map(([z, l]) => `<option value="${esc(z)}" ${z === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+            ${bulbs[g].length > 1 ? `<button class="btn" onclick="suDo(sReq('./api/house/rooms/${ROOM}/lights/${esc(g)}/split'), 'Split.')">Split</button>` : ""}
+            <button class="btn danger" onclick="suLightDel('${esc(g)}')">Remove</button></span></div>`).join("") || `<div class="muted">No lights.</div>`}
+          <select onchange="suLightAdd(this.value, '${esc(k)}');this.value=''"><option value="">+ add a light…</option>${free.map(x => `<option value="${esc(x.entity_id)}">${esc(x.name)} (${esc(x.entity_id)})</option>`).join("")}</select></div></div>`;
+      });
+      return out;
+    }
+    function suSel(g, on) { on ? SX.sel.add(g) : SX.sel.delete(g); renderSetup(); }
+    function suLightAdd(e, zone) { if (e) suDo(sReq(`./api/house/rooms/${ROOM}/lights`, { entity: e, zone }), "Light added."); }
+    function suLightDel(g) { if (confirm(`Remove light group ${g} from this room? (the light itself is untouched)`)) suDo(sReq(`./api/house/rooms/${ROOM}/lights/${g}`, null, "DELETE"), "Removed."); }
+    function suMerge() {
+      const groups = [...SX.sel];
+      const name = (prompt(`Merge ${groups.join(", ")} into one group called:`, groups[0]) || "").trim();
+      if (!name) return;
+      SX.sel.clear();
+      suDo(sReq(`./api/house/rooms/${ROOM}/lights/merge`, { groups, name }), `Merged into ${name}.`);
     }
 
     initRooms().then(loadOverview);

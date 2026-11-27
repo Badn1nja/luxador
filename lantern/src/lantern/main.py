@@ -1296,6 +1296,13 @@ class ZoneUpdate(BaseModel):
     lights: list[str] | None = None
     mode: str | None = None
     idle_pct: float | None = None
+    lux_sensor: str | None = None
+
+
+class LightAdd(BaseModel):
+    entity: str
+    name: str | None = None
+    zone: str = "room"
 
 
 class LightMove(BaseModel):
@@ -1325,7 +1332,61 @@ async def house_structure() -> dict[str, Any]:
     """Every room as stored: light groups, zones, sensors. The database is the source of truth."""
     assert runtime is not None
     return {"rooms": runtime.structure.rooms_raw(), "errors": runtime.structure_errors,
+            "home": runtime.structure.home(),
             "migrated": runtime.echo.get_structure("meta").get("migrated", {}).get("items", [])}
+
+
+class EntityAssign(BaseModel):
+    entity: str
+    zone: str | None = None
+
+
+class ActivityCreate(BaseModel):
+    name: str
+
+
+def _home_change(fn, *args) -> dict[str, Any]:
+    assert runtime is not None
+    try:
+        fn(*args)
+    except KeyError as exc:
+        raise HTTPException(404, f"not found: {exc}")
+    except StructureError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "home": runtime.structure.home()}
+
+
+@app.post("/api/house/rooms/{room_name}/entities")
+async def house_room_entity_add(room_name: str, req: EntityAssign) -> dict[str, Any]:
+    kind = classify(req.entity, runtime.bridge.states.get(req.entity))
+    if not kind:
+        raise HTTPException(400, f"{req.entity} isn't a light, presence, lux or media entity")
+    return _structure_change(runtime.structure.assign_entity, room_name, req.entity, kind, req.zone)
+
+
+@app.delete("/api/house/rooms/{room_name}/entities/{entity}")
+async def house_room_entity_remove(room_name: str, entity: str) -> dict[str, Any]:
+    return _structure_change(runtime.structure.unassign_entity, room_name, entity)
+
+
+@app.post("/api/house/home/entities")
+async def house_home_entity_add(req: EntityAssign) -> dict[str, Any]:
+    return _home_change(runtime.structure.home_add_entity, req.entity)
+
+
+@app.delete("/api/house/home/entities/{entity}")
+async def house_home_entity_remove(entity: str) -> dict[str, Any]:
+    return _home_change(runtime.structure.home_remove_entity, entity)
+
+
+@app.post("/api/house/activities")
+async def house_activity_add(req: ActivityCreate) -> dict[str, Any]:
+    return _home_change(runtime.structure.add_activity, req.name)
+
+
+@app.delete("/api/house/activities/{name}")
+async def house_activity_remove(name: str) -> dict[str, Any]:
+    return _home_change(runtime.structure.remove_activity, name)
 
 
 @app.get("/api/house/entities")
@@ -1386,6 +1447,16 @@ async def house_zone_update(room_name: str, zone: str, req: ZoneUpdate) -> dict[
 @app.delete("/api/house/rooms/{room_name}/zones/{zone}")
 async def house_zone_remove(room_name: str, zone: str) -> dict[str, Any]:
     return _structure_change(runtime.structure.remove_zone, room_name, zone)
+
+
+@app.post("/api/house/rooms/{room_name}/lights")
+async def house_light_add(room_name: str, req: LightAdd) -> dict[str, Any]:
+    return _structure_change(runtime.structure.add_light, room_name, req.entity, req.name, req.zone)
+
+
+@app.delete("/api/house/rooms/{room_name}/lights/{group}")
+async def house_light_remove(room_name: str, group: str) -> dict[str, Any]:
+    return _structure_change(runtime.structure.remove_light, room_name, group)
 
 
 @app.post("/api/house/rooms/{room_name}/lights/move")

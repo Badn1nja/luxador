@@ -175,6 +175,7 @@ def _parse_zone(name: str, raw: Any) -> ZoneConfig:
         lights=[str(x) for x in lights],
         mode=raw.get("mode"),
         idle_pct=float(raw["idle_pct"]) if raw.get("idle_pct") is not None else None,
+        lux_sensor=raw.get("lux_sensor") or None,
     )
 
 

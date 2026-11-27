@@ -125,3 +125,44 @@ def test_day_chart_endpoint(tmp_path, monkeypatch):
         d = c.get("/api/rooms/lounge/day").json()
         assert len(d["points"]) == 96 and {"sun", "gate", "light", "room_lux_pct"} <= set(d["points"][0])
         assert max(p["gate"] for p in d["points"]) > 50 and min(p["gate"] for p in d["points"]) == 0  # night closes, day opens
+
+
+def test_entities_attach_to_home_room_or_zone_and_detach(st):
+    cfg = st.assign_entity("lounge", "light.new_lamp", "lights", "sofa")
+    assert cfg.bulbs["new_lamp"] == ["light.new_lamp"] and "new_lamp" in cfg.presence.zones["sofa"].lights
+    cfg = st.assign_entity("lounge", "binary_sensor.extra_radar", "presence")  # the general radar acts as the room sensor
+    assert "binary_sensor.extra_radar" in cfg.presence.sensors
+    cfg = st.assign_entity("lounge", "binary_sensor.sofa_radar", "presence", "sofa")
+    assert cfg.presence.zones["sofa"].presence[-1] == "binary_sensor.sofa_radar"
+    with pytest.raises(StructureError, match="belongs to the room"):
+        st.assign_entity("lounge", "sensor.other_lux", "lux", "sofa")
+    with pytest.raises(StructureError, match="already attached"):
+        st.assign_entity("lounge", "light.new_lamp", "lights")
+    cfg = st.unassign_entity("lounge", "light.new_lamp")
+    assert "new_lamp" not in cfg.bulbs and "new_lamp" not in cfg.presence.zones["sofa"].lights
+    with pytest.raises(KeyError):
+        st.unassign_entity("lounge", "light.nope")
+
+
+def test_home_entities_and_activities(st):
+    st.home_add_entity("binary_sensor.house_radar")
+    st.add_activity("Theatre Mode")
+    assert st.home() == {"entities": ["binary_sensor.house_radar"], "activities": ["theatre_mode"]}
+    with pytest.raises(StructureError):
+        st.add_activity("theatre mode")
+    st.home_remove_entity("binary_sensor.house_radar")
+    st.remove_activity("theatre_mode")
+    assert st.home() == {"entities": [], "activities": []}
+
+
+def test_lights_attach_and_detach_and_zones_get_their_own_lux(st):
+    cfg = st.add_light("lounge", "light.new_lamp", zone="sofa")
+    assert cfg.bulbs["new_lamp"] == ["light.new_lamp"] and "new_lamp" in cfg.presence.zones["sofa"].lights
+    with pytest.raises(StructureError, match="only light"):
+        st.add_light("lounge", "switch.fan")
+    with pytest.raises(StructureError, match="unknown zone"):
+        st.add_light("lounge", "light.x", zone="nope")
+    assert "new_lamp" not in st.remove_light("lounge", "new_lamp").bulbs
+    cfg = st.update_zone("lounge", "sofa", lux_sensor="sensor.sofa_lux")
+    assert cfg.presence.zones["sofa"].lux_sensor == "sensor.sofa_lux"
+    assert st.update_zone("lounge", "sofa", lux_sensor="").presence.zones["sofa"].lux_sensor is None

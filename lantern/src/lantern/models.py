@@ -90,6 +90,7 @@ class ZoneConfig(BaseModel):
     lights: list[str] = Field(default_factory=list)  # light groups this zone owns (Standard §1)
     mode: str | None = None  # join | own (None = standard default)
     idle_pct: float | None = None
+    lux_sensor: str | None = None  # this zone's own light sensor (Luxie); None = use the room's
 
 
 class PresenceConfig(BaseModel):

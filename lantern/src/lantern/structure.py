@@ -25,7 +25,7 @@ import yaml
 from .models import RoomConfig
 from .parser import load_schemas_yaml, room_from_dict
 
-ROOM_KIND, SCHEMAS_KIND, META_KIND = "room", "schemas", "meta"
+ROOM_KIND, SCHEMAS_KIND, META_KIND, HOME_KIND = "room", "schemas", "meta", "home"
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 
 
@@ -193,6 +193,8 @@ class Structure:
             if fields["mode"] not in ("join", "own"):
                 raise StructureError("mode must be join or own")
             z["mode"] = fields["mode"]
+        if fields.get("lux_sensor") is not None:
+            z["lux_sensor"] = fields["lux_sensor"] or None
         if fields.get("idle_pct") is not None:
             z["idle_pct"] = max(0.0, min(100.0, float(fields["idle_pct"])))
         if fields.get("lights") is not None:
@@ -224,7 +226,138 @@ class Structure:
         del zones[name]  # its lights fall back to the room zone
         return self.save_room(raw, f"removed zone {name} (its lights now follow the room)")
 
+    # ------------------------------------------------------------------ entities (which things belong where)
+    def assign_entity(self, room: str, entity: str, kind: str, zone: str | None = None) -> RoomConfig:
+        """Attach an HA entity to a room, or to one of its zones. `kind` is lights/presence/lux/media."""
+        raw = self.room_raw(room)
+        zones = raw.setdefault("presence", {}).setdefault("zones", {})
+        if zone and zone != "room" and zone not in zones:
+            raise StructureError(f"unknown zone {zone!r}")
+        scoped = bool(zone and zone != "room")
+        if self.where_is(raw, entity):
+            raise StructureError(f"{entity} is already attached to this room: remove it first to move it")
+        if kind == "lights":
+            base = slug(entity.split(".", 1)[1]) or "light"
+            name, n = base, 2
+            while name in (raw.get("bulbs") or {}):
+                name, n = f"{base}_{n}", n + 1
+            raw.setdefault("bulbs", {})[name] = [entity]
+            if scoped:
+                zones[zone].setdefault("lights", []).append(name)
+            what = f"{entity} added as light {name}" + (f" in zone {zone}" if scoped else "")
+        elif kind == "presence":
+            if scoped:
+                zones[zone].setdefault("presence", []).append(entity)
+            else:
+                raw["presence"].setdefault("sensors", []).append(entity)
+            what = f"presence {entity} attached to " + (f"zone {zone}" if scoped else "the room")
+        elif kind in ("lux", "media"):
+            if scoped:
+                raise StructureError(f"a {kind} sensor belongs to the room, not a zone")
+            raw["lux_sensor" if kind == "lux" else "media_sensor"] = entity
+            what = f"{kind} sensor {entity} attached to the room"
+        else:
+            raise StructureError(f"{entity} isn't a light, presence, lux or media entity")
+        return self.save_room(raw, what)
+
+    @staticmethod
+    def where_is(raw: dict[str, Any], entity: str) -> bool:
+        pres = raw.get("presence") or {}
+        return (entity in {e for ents in (raw.get("bulbs") or {}).values() for e in ents}
+                or entity in (pres.get("sensors") or [])
+                or any(entity in (z.get("presence") or []) for z in (pres.get("zones") or {}).values())
+                or entity in (raw.get("lux_sensor"), raw.get("media_sensor")))
+
+    def unassign_entity(self, room: str, entity: str) -> RoomConfig:
+        raw = self.room_raw(room)
+        if not self.where_is(raw, entity):
+            raise KeyError(entity)
+        pres = raw.setdefault("presence", {})
+        zones = pres.setdefault("zones", {})
+        pres["sensors"] = [e for e in (pres.get("sensors") or []) if e != entity]
+        for z in zones.values():
+            z["presence"] = [e for e in (z.get("presence") or []) if e != entity]
+        for k in ("lux_sensor", "media_sensor"):
+            if raw.get(k) == entity:
+                raw[k] = None
+        for g in list(raw.get("bulbs") or {}):
+            raw["bulbs"][g] = [e for e in raw["bulbs"][g] if e != entity]
+            if not raw["bulbs"][g]:
+                del raw["bulbs"][g]
+                for z in zones.values():
+                    z["lights"] = [light for light in (z.get("lights") or []) if light != g]
+        return self.save_room(raw, f"{entity} detached from the room")
+
+    # ------------------------------------------------------------------ home (house-wide things)
+    def home(self) -> dict[str, Any]:
+        h = self.echo.get_structure(HOME_KIND).get("home") or {}
+        return {"entities": list(h.get("entities") or []), "activities": list(h.get("activities") or [])}
+
+    def _save_home(self, h: dict[str, Any], what: str) -> dict[str, Any]:
+        self.echo.put_structure(HOME_KIND, "home", h)
+        self._log("home", what)
+        return h
+
+    def home_add_entity(self, entity: str) -> dict[str, Any]:
+        h = self.home()
+        if entity in h["entities"]:
+            raise StructureError(f"{entity} is already attached to the home")
+        h["entities"].append(entity)
+        return self._save_home(h, f"{entity} attached to the home")
+
+    def home_remove_entity(self, entity: str) -> dict[str, Any]:
+        h = self.home()
+        if entity not in h["entities"]:
+            raise KeyError(entity)
+        h["entities"].remove(entity)
+        return self._save_home(h, f"{entity} detached from the home")
+
+    def add_activity(self, name: str) -> dict[str, Any]:
+        name = slug(name)
+        if not ID_RE.match(name):
+            raise StructureError("activity name must be 1-40 characters: a-z, 0-9 and _")
+        h = self.home()
+        if name in h["activities"]:
+            raise StructureError(f"activity {name!r} already exists")
+        h["activities"].append(name)
+        return self._save_home(h, f"added activity {name} (no behaviour yet)")
+
+    def remove_activity(self, name: str) -> dict[str, Any]:
+        h = self.home()
+        if name not in h["activities"]:
+            raise KeyError(name)
+        h["activities"].remove(name)
+        return self._save_home(h, f"removed activity {name}")
+
     # ------------------------------------------------------------------ light groups
+    def add_light(self, room: str, entity: str, name: str | None = None, zone: str = "room") -> RoomConfig:
+        """Attach one light entity to a room as its own light group, owned by a zone (or the room itself)."""
+        if not entity.startswith("light."):
+            raise StructureError("only light.* entities can be added as lights")
+        raw = self.room_raw(room)
+        bulbs = raw.setdefault("bulbs", {})
+        group = slug(name or entity.split(".", 1)[1])
+        base, n = group, 2
+        while group in bulbs:
+            group, n = f"{base}_{n}", n + 1
+        bulbs[group] = [entity]
+        zones = (raw.get("presence") or {}).get("zones") or {}
+        if zone != "room":
+            if zone not in zones:
+                raise StructureError(f"unknown zone {zone!r}")
+            zones[zone].setdefault("lights", []).append(group)
+        return self.save_room(raw, f"added light {entity} as {group}")
+
+    def remove_light(self, room: str, group: str) -> RoomConfig:
+        raw = self.room_raw(room)
+        bulbs = raw.get("bulbs") or {}
+        if group not in bulbs:
+            raise StructureError(f"unknown light group {group!r}")
+        del bulbs[group]
+        for z in ((raw.get("presence") or {}).get("zones") or {}).values():
+            z["lights"] = [l for l in (z.get("lights") or []) if l != group]
+        return self.save_room(raw, f"removed light group {group}")
+
     def merge_lights(self, room: str, groups: list[str], new_name: str | None = None) -> RoomConfig:
         raw = self.room_raw(room)
         bulbs = raw.get("bulbs") or {}
